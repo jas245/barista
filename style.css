@@ -1,0 +1,526 @@
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+body {
+    background: radial-gradient(circle at center, #1b1c23 0%, #0d0e12 100%);
+    color: #e5e5ec;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    overflow: hidden;
+}
+
+.app-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 10px;
+}
+
+header {
+    text-align: center;
+    margin-bottom: 14px;
+}
+
+h1 {
+    font-size: 1.6rem;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    background: linear-gradient(135deg, #ffffff 0%, #b8b8c8 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+
+p {
+    font-size: 0.88rem;
+    color: #8c8c9a;
+    margin-top: 4px;
+}
+
+#canvas-container {
+    height: min(480px, calc(100dvh - 20px));
+    width: auto;
+    aspect-ratio: 360 / 480;
+    flex-shrink: 0;
+}
+
+.workspace {
+    display: flex;
+    gap: 14px;
+    align-items: flex-end;
+}
+
+canvas {
+    width: 100%;
+    height: 100%;
+    display: block;
+}
+
+/* 2. Middle Panel */
+.middle-panel {
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    align-items: center;
+    width: clamp(210px, 28vw, 260px);
+    height: min(480px, calc(100dvh - 20px));
+    position: relative;
+}
+
+/* Speech Bubble */
+.speech-bubble {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    background: #ffffff;
+    color: #1a1a24;
+    padding: 8px 14px;
+    border-radius: 16px;
+    font-size: 0.85rem;
+    font-weight: 500;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+    z-index: 10;
+    max-width: 220px;
+    text-align: center;
+    transition: opacity 0.2s ease, transform 0.2s ease;
+	cursor: pointer;
+}
+
+/* Recipe Hint Tooltip Box */
+.recipe-hint {
+    position: absolute;
+    top: 75px;
+    right: 6px;
+    background: #ffffff;
+    color: #1a1a24;
+    padding: 10px 14px;
+    border-radius: 12px;
+    font-size: 0.82rem;
+    font-weight: 600;
+    line-height: 1.45;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+    z-index: 15;
+    text-align: left;
+    min-width: 140px;
+    transition: opacity 0.2s ease;
+}
+
+.speech-bubble strong {
+    color: #f97316;
+}
+
+.speech-tail {
+    position: absolute;
+    bottom: -10px;
+    left: 45px;
+    width: 0;
+    height: 0;
+    border-left: 10px solid transparent;
+    border-right: 10px solid transparent;
+    border-top: 10px solid #ffffff;
+}
+
+/* Middle Bottom Row */
+.middle-bottom-row {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+    width: 100%;
+}
+
+/* Action Buttons */
+.action-buttons {
+    display: flex;
+    gap: 10px;
+    flex-shrink: 0;
+}
+
+.btn-action {
+    padding: 8px 16px;
+    font-size: 0.85rem;
+    font-weight: 700;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    border: 2px solid transparent;
+}
+
+.btn-empty {
+    background: #23242e;
+    color: #e5e5ec;
+    border-color: #3b3c4f;
+}
+
+.btn-empty:hover {
+    background: #2f303f;
+    border-color: #ef4444;
+    color: #ef4444;
+}
+
+.btn-serve {
+    background: #10b981;
+    color: #ffffff;
+}
+
+.btn-serve:hover {
+    background: #059669;
+    box-shadow: 0 0 14px rgba(16, 185, 129, 0.4);
+}
+
+/* Square Face Avatar */
+.face-container {
+    width: min(200px, calc(100dvh - 125px));
+    height: min(200px, calc(100dvh - 125px));
+    background: #181922;
+    border: 2px solid rgba(255, 255, 255, 0.12);
+    border-radius: 12px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    overflow: hidden;
+    flex-shrink: 0;
+    position: relative;
+}
+
+.face-placeholder {
+    font-size: 1.5rem;
+    color: #636675;
+    font-style: italic;
+}
+
+.face-container img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+/* 3. Sidebar */
+.sidebar {
+    height: min(480px, calc(100dvh - 20px));
+    max-height: min(480px, calc(100dvh - 20px));
+    display: flex;
+    flex-direction: column;
+}
+
+/* Utility to toggle visibility in code */
+.hidden {
+    opacity: 0 !important;
+    pointer-events: none !important;
+}
+
+.selector-title {
+    font-size: 0.8rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: #727282;
+    margin-bottom: 12px;
+}
+
+.ingredient-group {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    flex: 1 1 0;
+    min-height: 0; /* Enables scrolling inside flexbox */
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding-right: 6px;
+}
+
+/* Custom Sleek Scrollbar */
+.ingredient-group::-webkit-scrollbar {
+    width: 5px;
+}
+
+.ingredient-group::-webkit-scrollbar-track {
+    background: rgba(255, 255, 255, 0.02);
+    border-radius: 4px;
+}
+
+.ingredient-group::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.18);
+    border-radius: 4px;
+}
+
+.ingredient-group::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.35);
+}
+
+.ingredient-btn {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 14px;
+    background: #1c1d25;
+    border: 2px solid transparent;
+    border-radius: 10px;
+    color: #a8a8ba;
+    cursor: pointer;
+    text-align: left;
+    transition: all 0.2s ease;
+    outline: none;
+}
+
+.ingredient-btn:hover {
+    background: #232430;
+    color: #e5e5ec;
+}
+
+/* Active Highlight Styles */
+.ingredient-btn.active {
+    background: #252735;
+    color: #ffffff;
+    border-color: #6366f1;
+    box-shadow: 0 0 16px rgba(99, 102, 241, 0.25);
+}
+
+.ingredient-btn[data-type="coffee"].active {
+    border-color: #c97a44;
+    box-shadow: 0 0 16px rgba(201, 122, 68, 0.3);
+}
+
+.ingredient-btn[data-type="milk"].active {
+    border-color: #f7eed4;
+    box-shadow: 0 0 16px rgba(247, 238, 212, 0.3);
+}
+
+.ingredient-btn[data-type="vodka"].active {
+    border-color: #bae6fd;
+    box-shadow: 0 0 16px rgba(186, 230, 253, 0.35);
+}
+
+.ingredient-btn[data-type="rum"].active {
+    border-color: #f5f5f4;
+    box-shadow: 0 0 16px rgba(245, 245, 244, 0.3);
+}
+
+.ingredient-btn[data-type="lemonade"].active {
+    border-color: #fde047;
+    box-shadow: 0 0 16px rgba(253, 224, 71, 0.35);
+}
+
+/* Indicators */
+.indicator-vodka {
+    background: rgba(220, 240, 255, 0.9);
+    box-shadow: 0 0 8px rgba(186, 230, 253, 0.9);
+    border: 1px solid rgba(255, 255, 255, 0.7);
+}
+
+.indicator-rum {
+    background: rgba(245, 240, 230, 0.9);
+    box-shadow: 0 0 8px rgba(245, 240, 230, 0.8);
+    border: 1px solid rgba(255, 255, 255, 0.6);
+}
+
+.indicator-lemonade {
+    background: #facc15;
+    box-shadow: 0 0 8px #facc15;
+}
+
+.ingredient-btn[data-type="wine"].active {
+    border-color: #f43f5e;
+    box-shadow: 0 0 16px rgba(244, 63, 94, 0.35);
+}
+
+.ingredient-btn[data-type="orange-liqueur"].active {
+    border-color: #fb923c;
+    box-shadow: 0 0 16px rgba(251, 146, 60, 0.35);
+}
+
+.ingredient-btn[data-type="brandy"].active {
+    border-color: #d97706;
+    box-shadow: 0 0 16px rgba(217, 119, 6, 0.35);
+}
+
+/* Indicators */
+.indicator-wine {
+    background: rgba(145, 15, 55, 0.9);
+    box-shadow: 0 0 8px rgba(185, 28, 70, 0.8);
+    border: 1px solid rgba(255, 100, 130, 0.4);
+}
+
+.indicator-orange-liqueur {
+    background: rgba(245, 130, 20, 0.9);
+    box-shadow: 0 0 8px rgba(245, 130, 20, 0.8);
+    border: 1px solid rgba(255, 180, 80, 0.4);
+}
+
+.indicator-brandy {
+    background: rgba(185, 85, 22, 0.9);
+    box-shadow: 0 0 8px rgba(185, 85, 22, 0.8);
+    border: 1px solid rgba(245, 150, 60, 0.4);
+}
+
+/* Active Borders & Glows */
+.ingredient-btn[data-type="lime-juice"].active { border-color: #bef264; box-shadow: 0 0 16px rgba(190, 242, 100, 0.35); }
+.ingredient-btn[data-type="ginger-beer"].active { border-color: #fde68a; box-shadow: 0 0 16px rgba(253, 230, 138, 0.35); }
+.ingredient-btn[data-type="champagne"].active { border-color: #fef08a; box-shadow: 0 0 16px rgba(254, 240, 138, 0.35); }
+.ingredient-btn[data-type="orange-juice"].active { border-color: #f97316; box-shadow: 0 0 16px rgba(249, 115, 22, 0.35); }
+.ingredient-btn[data-type="triple-sec"].active { border-color: #e0f2fe; box-shadow: 0 0 16px rgba(224, 242, 254, 0.35); }
+.ingredient-btn[data-type="tomato-juice"].active { border-color: #ef4444; box-shadow: 0 0 16px rgba(239, 68, 68, 0.35); }
+.ingredient-btn[data-type="tequila"].active { border-color: #e2e8f0; box-shadow: 0 0 16px rgba(226, 232, 240, 0.35); }
+.ingredient-btn[data-type="coffee-liqueur"].active { border-color: #593724; box-shadow: 0 0 16px rgba(89, 55, 36, 0.4); }
+.ingredient-btn[data-type="simple-syrup"].active { border-color: #f8fafc; box-shadow: 0 0 16px rgba(248, 250, 252, 0.35); }
+
+/* Indicators */
+.indicator-lime-juice { background: #bcf33c; box-shadow: 0 0 8px #bcf33c; }
+.indicator-ginger-beer { background: rgba(235, 210, 150, 0.9); box-shadow: 0 0 8px rgba(235, 210, 150, 0.8); border: 1px solid rgba(255, 255, 255, 0.4); }
+.indicator-champagne { background: rgba(248, 230, 160, 0.85); box-shadow: 0 0 8px rgba(248, 230, 160, 0.8); border: 1px solid rgba(255, 255, 255, 0.7); }
+.indicator-orange-juice { background: #fa820a; box-shadow: 0 0 8px #fa820a; }
+.indicator-triple-sec { background: rgba(230, 242, 250, 0.85); box-shadow: 0 0 8px rgba(230, 242, 250, 0.8); border: 1px solid rgba(255, 255, 255, 0.6); }
+.indicator-tomato-juice { background: #c51c14; box-shadow: 0 0 8px #c51c14; }
+.indicator-tequila { background: rgba(238, 244, 248, 0.9); box-shadow: 0 0 8px rgba(238, 244, 248, 0.8); border: 1px solid rgba(255, 255, 255, 0.7); }
+.indicator-coffee-liqueur { background: #2b140b; box-shadow: 0 0 8px #2b140b; border: 1px solid rgba(200, 130, 90, 0.3); }
+.indicator-simple-syrup { background: rgba(245, 245, 235, 0.85); box-shadow: 0 0 8px rgba(245, 245, 235, 0.8); border: 1px solid rgba(255, 255, 255, 0.6); }
+
+.indicator {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.indicator-coffee {
+    background: #7a3e20;
+    box-shadow: 0 0 6px #7a3e20;
+}
+
+.indicator-milk {
+    background: #f7eed4;
+    box-shadow: 0 0 6px #f7eed4;
+}
+
+.btn-text strong {
+    display: block;
+    font-size: 0.95rem;
+}
+
+.btn-text small {
+    font-size: 0.72rem;
+    color: #8c8c9a;
+}
+
+.btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 24px;
+    font-size: 0.95rem;
+    font-weight: 600;
+    border-radius: 8px;
+    border: 1px solid transparent;
+    cursor: pointer;
+    transition: all 0.15s ease-out;
+    outline: none;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.btn:active {
+    transform: scale(0.96);
+}
+
+.btn-indicator {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    display: inline-block;
+}
+
+.btn-coffee {
+    background: linear-gradient(180deg, #442416 0%, #2a150b 100%);
+    border-color: #6a3a24;
+    color: #f3e6de;
+}
+
+
+.btn-reset-sidebar {
+    margin-top: auto;
+    padding: 10px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    background: #20212b;
+    border: 1px solid #313242;
+    border-radius: 8px;
+    color: #8c8c9a;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.btn-reset-sidebar:hover {
+    background: #2c2d3a;
+    color: #e5e5ec;
+}
+
+.btn-coffee .btn-indicator {
+    background-color: #d17842;
+    box-shadow: 0 0 8px #d17842;
+}
+
+.btn-coffee:hover {
+    background: linear-gradient(180deg, #532c1c 0%, #341a0e 100%);
+    border-color: #884b30;
+}
+
+.btn-milk {
+    background: linear-gradient(180deg, #efe2c8 0%, #d8c7a6 100%);
+    border-color: #fcf6e9;
+    color: #2b2318;
+}
+
+.btn-milk .btn-indicator {
+    background-color: #ffffff;
+    box-shadow: 0 0 8px #ffffff;
+}
+
+.btn-milk:hover {
+    background: linear-gradient(180deg, #f7eedb 0%, #e2d2b4 100%);
+}
+
+.btn-reset {
+    background: #23242c;
+    border-color: #353642;
+    color: #a8a8ba;
+    padding: 12px 20px;
+}
+
+.btn-reset:hover {
+    background: #2c2e38;
+    color: #e5e5ec;
+}
+
+.dashboard {
+    display: flex;
+    gap: 20px;
+    margin-top: 14px;
+}
+
+.stat-badge {
+    font-size: 0.8rem;
+    color: #727282;
+}
+
+.stat-badge strong {
+    color: #b5b5c7;
+}
+
+@media (max-height: 520px), (max-width: 920px) {
+    .app-container {
+        transform: scale(0.85);
+        transform-origin: center center;
+    }
+}
+
+@media (max-height: 380px) {
+    .app-container {
+        transform: scale(0.85);
+    }
+}

@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Aisha the Barista</title>
+    <link rel="stylesheet" href="style.css">
+    <!-- LiquidFun physics engine -->
+    <script src="liquidfun.js"></script>
+</head>
+<body>
+
+    <div class="app-container">
+
+
+       <div class="workspace">
+			<!-- 1. Left: Smaller WebGL Canvas -->
+			<div id="canvas-container">
+				<canvas id="glCanvas" width="360" height="480"></canvas>
+			</div>
+
+			<!-- 2. Middle: Actions & Customer Section -->
+			<div class="middle-panel">
+				<!-- Speech Bubble (hideable via .hidden class or code) -->
+				<div id="speech-bubble" class="speech-bubble">
+					<span>I want an <strong id="order-text">Espresso Martini</strong></span>
+					<div class="speech-tail"></div>
+				</div>
+				
+				<!-- Recipe Hint Box (Appears when speech bubble is clicked) -->
+				<div id="recipe-hint" class="recipe-hint hidden"></div>
+
+				<div class="middle-bottom-row">
+					<!-- Square Face / Character Container (hideable via .hidden) -->
+					<div id="face-container" class="face-container">
+						<img id="face-image" src="" alt="Customer" style="display: none;" />
+						<span id="face-placeholder" class="face-placeholder">face</span>
+					</div>
+					<!-- Action Buttons -->
+					<div class="action-buttons">
+						<button id="btn-empty" class="btn-action btn-empty">Empty</button>
+						<button id="btn-serve" class="btn-action btn-serve">Serve</button>
+					</div>
+
+					
+				</div>
+			</div>
+
+			<!-- 3. Right: Select Liquids Sidebar (Clear Canvas removed) -->
+			<aside class="sidebar">
+				<div class="selector-title">Select Liquid</div>
+				<div class="ingredient-group">
+					<button id="btn-coffee" class="ingredient-btn active" data-type="coffee">
+						<span class="indicator indicator-coffee"></span>
+						<div class="btn-text"><strong>Espresso</strong><small>Rich Dark Roast</small></div>
+					</button>
+					<button id="btn-milk" class="ingredient-btn" data-type="milk">
+						<span class="indicator indicator-milk"></span>
+						<div class="btn-text"><strong>Steamed Milk</strong><small>Silky Foam</small></div>
+					</button>
+					<button id="btn-vodka" class="ingredient-btn" data-type="vodka">
+						<span class="indicator indicator-vodka"></span>
+						<div class="btn-text"><strong>Vodka</strong><small>Clear & Crisp</small></div>
+					</button>
+					<button id="btn-rum" class="ingredient-btn" data-type="rum">
+						<span class="indicator indicator-rum"></span>
+						<div class="btn-text"><strong>White Rum</strong><small>Smooth & Clear</small></div>
+					</button>
+					<button id="btn-lemonade" class="ingredient-btn" data-type="lemonade">
+						<span class="indicator indicator-lemonade"></span>
+						<div class="btn-text"><strong>Lemonade</strong><small>Translucent Citrus</small></div>
+					</button>
+					<button id="btn-wine" class="ingredient-btn" data-type="wine">
+						<span class="indicator indicator-wine"></span>
+						<div class="btn-text"><strong>Red Wine</strong><small>Ruby & Deep Violet</small></div>
+					</button>
+					<button id="btn-orange-liqueur" class="ingredient-btn" data-type="orange-liqueur">
+						<span class="indicator indicator-orange-liqueur"></span>
+						<div class="btn-text"><strong>Orange Liqueur</strong><small>Vibrant & Zesty</small></div>
+					</button>
+					<button id="btn-brandy" class="ingredient-btn" data-type="brandy">
+						<span class="indicator indicator-brandy"></span>
+						<div class="btn-text"><strong>Brandy</strong><small>Warm Caramel Amber</small></div>
+					</button>
+					<button id="btn-lime-juice" class="ingredient-btn" data-type="lime-juice">
+						<span class="indicator indicator-lime-juice"></span>
+						<div class="btn-text"><strong>Lime Juice</strong><small>Tart & Vibrant</small></div>
+					</button>
+					<button id="btn-ginger-beer" class="ingredient-btn" data-type="ginger-beer">
+						<span class="indicator indicator-ginger-beer"></span>
+						<div class="btn-text"><strong>Ginger Beer</strong><small>Spiced & Cloudy</small></div>
+					</button>
+					<button id="btn-champagne" class="ingredient-btn" data-type="champagne">
+						<span class="indicator indicator-champagne"></span>
+						<div class="btn-text"><strong>Champagne</strong><small>Sparkling Straw</small></div>
+					</button>
+					<button id="btn-orange-juice" class="ingredient-btn" data-type="orange-juice">
+						<span class="indicator indicator-orange-juice"></span>
+						<div class="btn-text"><strong>Orange Juice</strong><small>Citrus Pulp</small></div>
+					</button>
+					<button id="btn-triple-sec" class="ingredient-btn" data-type="triple-sec">
+						<span class="indicator indicator-triple-sec"></span>
+						<div class="btn-text"><strong>Triple Sec</strong><small>Clear Curacao</small></div>
+					</button>
+					<button id="btn-tomato-juice" class="ingredient-btn" data-type="tomato-juice">
+						<span class="indicator indicator-tomato-juice"></span>
+						<div class="btn-text"><strong>Tomato Juice</strong><small>Crimson Red</small></div>
+					</button>
+					<button id="btn-tequila" class="ingredient-btn" data-type="tequila">
+						<span class="indicator indicator-tequila"></span>
+						<div class="btn-text"><strong>Tequila</strong><small>Crisp Agave</small></div>
+					</button>
+					<button id="btn-coffee-liqueur" class="ingredient-btn" data-type="coffee-liqueur">
+						<span class="indicator indicator-coffee-liqueur"></span>
+						<div class="btn-text"><strong>Coffee Liqueur</strong><small>Dark Roast</small></div>
+					</button>
+					<button id="btn-simple-syrup" class="ingredient-btn" data-type="simple-syrup">
+						<span class="indicator indicator-simple-syrup"></span>
+						<div class="btn-text"><strong>Simple Syrup</strong><small>Sweet Viscosity</small></div>
+					</button>
+				</div>
+			</aside>
+		</div>
+    </div>
+
+    <script src="main.js"></script>
+</body>
+</html>

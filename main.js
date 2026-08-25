@@ -766,7 +766,7 @@ function loop() {
     // Step Physics
     world.Step(1 / 60, 6, 2);
 	particleSystem.DestroyParticlesInShape(bottomKillShape, identityTransform);
-    mixParticles();
+    //mixParticles();
 
     if (isPointerDown && selectedIngredient && frameCounter % 3 === 0) {
 		const worldX = pointerX / SCALE;

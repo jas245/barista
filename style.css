@@ -283,7 +283,7 @@ canvas {
     box-shadow: 0 0 16px rgba(99, 102, 241, 0.25);
 }
 
-.ingredient-btn[data-type="coffee"].active {
+.ingredient-btn[data-type="espresso"].active {
     border-color: #c97a44;
     box-shadow: 0 0 16px rgba(201, 122, 68, 0.3);
 }
@@ -389,7 +389,7 @@ canvas {
     flex-shrink: 0;
 }
 
-.indicator-coffee {
+.indicator-espresso {
     background: #7a3e20;
     box-shadow: 0 0 6px #7a3e20;
 }

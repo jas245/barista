@@ -25,7 +25,7 @@ let particleSystem;
 let animationFrameId;
 
 let particleMix = []; // 0.0 = Espresso, 1.0 = Milk
-let selectedIngredient = 'coffee'; // Currently active selected drink
+let selectedIngredient = 'espresso'; // Currently active selected drink
 let isPointerDown = false;
 let pointerX = 0;
 let pointerY = 0;
@@ -61,16 +61,16 @@ const cupFS = `
 const RECIPES = {
     // ☕ Coffee Drinks
     "Macchiato": {
-        'coffee': 0.80,
+        'espresso': 0.80,
         'milk': 0.20
     },
     "Cortado": {
-        'coffee': 0.50,
+        'espresso': 0.50,
         'milk': 0.50
     },
     "Flat White": {
         'milk': 0.65,
-        'coffee': 0.35
+        'espresso': 0.35
     },
 
     // 🍋 Highballs & Sparklers
@@ -123,7 +123,7 @@ const RECIPES = {
     },
     "Espresso Martini": {
         'vodka': 0.40,
-        'coffee': 0.30,
+        'espresso': 0.30,
         'coffee-liqueur': 0.20,
         'simple-syrup': 0.10
     }
@@ -414,7 +414,7 @@ function spawnLiquid(type, worldX, worldY) {
 
     let r = 42, g = 18, b = 8, a = 250;
 
-    if (type === 'coffee') {
+    if (type === 'espresso') {
         pgd.flags = waterFlag | mixingFlag;
         r = 42; g = 18; b = 8; a = 250; // Opaque espresso
         pgd.linearVelocity = new b2Vec2((Math.random() - 0.5) * 0.1, 4.6);

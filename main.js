@@ -1110,7 +1110,7 @@ async function requestCustomerOrder(drinkName) {
                     },
                     {
                         role: "user",
-                        content: `Make a bar order where you request a(n) ${drinkName}, in a ${tone} way.`
+                        content: `Make a bar order where you request a(n) ${drinkName}, in a ${tone} way. Address the bartender as Aisha.`
                     }
                 ],
                 max_completion_tokens: 150

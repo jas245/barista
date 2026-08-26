@@ -307,7 +307,7 @@ function createFramebuffer(gl, width, height) {
 }
 
 function initWebGL() {
-    gl = canvas.getContext('webgl', { alpha: false, antialias: true });
+    gl = canvas.getContext('webgl', { alpha: true, antialias: true });
     if (!gl) {
         alert('WebGL not supported on this browser.');
         return;
@@ -669,7 +669,7 @@ function render() {
     // 4. Final Render & Shading Pass -> Screen Canvas
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.viewport(0, 0, canvas.width, canvas.height);
-    gl.clearColor(0.08, 0.09, 0.11, 1.0);
+    gl.clearColor(0.0, 0.0, 0.0, 0.0); 
     gl.clear(gl.COLOR_BUFFER_BIT);
 
     gl.enable(gl.BLEND);
@@ -745,11 +745,11 @@ function renderGlassCup(isOverlay) {
 
     if (!isOverlay) {
         // Solid dark container interior
-        gl.uniform4f(colorLoc, 0.12, 0.14, 0.18, 1.0);
+        gl.uniform4f(colorLoc, 0.12, 0.14, 0.18, 0.35);
         gl.drawArrays(gl.TRIANGLES, 0, triangleCount);
     } else {
         // Solid opaque cup walls & base (blocks all liquid bleed behind walls)
-        gl.uniform4f(colorLoc, 0.26, 0.30, 0.38, 1.0);
+        gl.uniform4f(colorLoc, 0.26, 0.30, 0.38, 0.6);
         gl.drawArrays(gl.TRIANGLES, 0, triangleCount);
     }
 }

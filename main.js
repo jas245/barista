@@ -16,7 +16,7 @@ const canvas = document.getElementById('glCanvas');
 const particleCountEl = document.getElementById('particle-count');
 
 const SCALE = 100; // 100 pixels per meter in physics space
-const PARTICLE_RADIUS = 0.065; 
+const PARTICLE_RADIUS = 0.02; 
 
 let particleTypes = [];
 
@@ -39,6 +39,53 @@ bottomKillShape.SetAsBoxXYCenterAngle(10.0, 0.5, new b2Vec2(0.0, 5.0), 0);
 
 const identityTransform = new b2Transform();
 identityTransform.SetIdentity();
+
+let isMixingMode = false;
+let isDraggingCup = false;
+let dragStartY = 0;
+let cupBaseY = 0;
+let topCupFixtures = [];
+
+function toggleShakerMode() {
+    isMixingMode = !isMixingMode;
+    const mixBtn = document.getElementById('btn-mix');
+    mixBtn.classList.toggle('active', isMixingMode);
+
+    if (isMixingMode) {
+        // Allow the cup to move and push the liquid
+        cupBody.SetType(b2_kinematicBody);
+
+        // Spawn airtight inverted top cup fixtures directly on cupBody
+        const topRoof = new b2PolygonShape();
+        topRoof.SetAsBoxXYCenterAngle(0.65, 0.05, new b2Vec2(1.80, 1.08), 0.0);
+        topCupFixtures.push(cupBody.CreateFixtureFromShape(topRoof, 0.0));
+
+        const topLeftWall = new b2PolygonShape();
+        topLeftWall.SetAsBoxXYCenterAngle(0.05, 0.84, new b2Vec2(1.11, 1.92), 0.091);
+        topCupFixtures.push(cupBody.CreateFixtureFromShape(topLeftWall, 0.0));
+
+        const topRightWall = new b2PolygonShape();
+        topRightWall.SetAsBoxXYCenterAngle(0.05, 0.84, new b2Vec2(2.49, 1.92), -0.091);
+        topCupFixtures.push(cupBody.CreateFixtureFromShape(topRightWall, 0.0));
+    } else {
+        // Remove top cup fixtures
+        for (let i = 0; i < topCupFixtures.length; i++) {
+            cupBody.DestroyFixture(topCupFixtures[i]);
+        }
+        topCupFixtures = [];
+
+        // Return cup to original base position
+        cupBody.SetLinearVelocity(new b2Vec2(0, 0));
+        cupBody.SetTransform(new b2Vec2(0, 0), 0);
+        cupBody.SetType(b2_staticBody);
+    }
+}
+
+document.getElementById('btn-mix').addEventListener('click', () => {
+    isPointerDown = false;
+    isDraggingCup = false;
+    toggleShakerMode();
+});
 
 const cupVS = `
     attribute vec2 aPosition;
@@ -166,11 +213,12 @@ const splatFS = `
         float rSq = dot(coord, coord);
         if (rSq > 1.0) discard;
 
-        // Full geometric density kernel (consistent physical droplet radius)
+        // Full geometric density kernel
         float density = (1.0 - rSq) * (1.0 - rSq) * 0.055;
         
-        // RGB carries density-weighted color; Alpha carries true geometric thickness
-        gl_FragColor = vec4(vColor.rgb * density, density);
+        // Weight both color and alpha by the particle's intrinsic opacity
+        float weight = vColor.a * density;
+        gl_FragColor = vec4(vColor.rgb * weight, weight);
     }
 `;
 
@@ -179,45 +227,58 @@ const renderFS = `
     uniform sampler2D uFluidTexture;
     uniform vec2 uTexelSize;
     uniform float uThreshold;
+    uniform vec2 uCupOffset;
+    uniform bool uIsMixing;
     varying vec2 vUv;
 
     void main() {
+        // Convert to local cup coordinates
+        float worldX = (vUv.x / (uTexelSize.x * 100.0)) - uCupOffset.x;
+        float worldY = ((1.0 - vUv.y) / (uTexelSize.y * 100.0)) - uCupOffset.y;
+
+        // Cup bounds (slanted walls, floor, and shaker roof)
+        float minX = 1.15 + (worldY - 3.60) * 0.0913;
+        float maxX = 2.45 - (worldY - 3.60) * 0.0913;
+        if (uIsMixing && worldY < 2.76) {
+            minX = 1.15 - (worldY - 1.92) * 0.0913;
+            maxX = 2.45 + (worldY - 1.92) * 0.0913;
+        }
+
+        float minY = uIsMixing ? 1.05 : 0.0;
+        if (worldY > 4.40 || worldY < minY || worldX < minX || worldX > maxX) {
+            discard;
+        }
+
         vec4 sampleCenter = texture2D(uFluidTexture, vUv);
         float density = sampleCenter.a;
 
-        float boundaryAlpha = smoothstep(uThreshold - 0.005, uThreshold + 0.005, density);
+        float boundaryAlpha = smoothstep(uThreshold - 0.003, uThreshold + 0.003, density);
         if (boundaryAlpha < 0.01) {
             discard;
         }
 
-        // True optical blended color
         vec3 liquidBase = clamp(sampleCenter.rgb / max(density, 0.0001), 0.0, 1.0);
 
-        // Surface normal reconstruction
-        float left   = texture2D(uFluidTexture, vUv - vec2(uTexelSize.x * 2.0, 0.0)).a;
-        float right  = texture2D(uFluidTexture, vUv + vec2(uTexelSize.x * 2.0, 0.0)).a;
-        float top    = texture2D(uFluidTexture, vUv + vec2(0.0, uTexelSize.y * 2.0)).a;
-        float bottom = texture2D(uFluidTexture, vUv - vec2(0.0, uTexelSize.y * 2.0)).a;
+        float left   = texture2D(uFluidTexture, vUv - vec2(uTexelSize.x * 4.0, 0.0)).a;
+        float right  = texture2D(uFluidTexture, vUv + vec2(uTexelSize.x * 4.0, 0.0)).a;
+        float top    = texture2D(uFluidTexture, vUv + vec2(0.0, uTexelSize.y * 4.0)).a;
+        float bottom = texture2D(uFluidTexture, vUv - vec2(0.0, uTexelSize.y * 4.0)).a;
 
         vec2 gradient = vec2(right - left, top - bottom);
-        vec3 normal = normalize(vec3(gradient * 20.0, 1.0));
+        vec3 normal = normalize(vec3(gradient * 8.0, 1.0));
 
-        // Soft directional lighting
         vec3 lightDir = normalize(vec3(-0.3, 0.6, 0.75));
         float diff = clamp(dot(normal, lightDir), 0.0, 1.0);
 
-        // Specular highlight (gives individual droplets a crisp, shiny surface)
         vec3 viewDir = vec3(0.0, 0.0, 1.0);
         vec3 halfDir = normalize(lightDir + viewDir);
-        float spec = pow(max(dot(normal, halfDir), 0.0), 36.0);
+        float spec = pow(max(dot(normal, halfDir), 0.0), 32.0);
+        float rim = pow(clamp(1.0 - normal.z, 0.0, 1.0), 3.0);
 
-        vec3 specColor = mix(vec3(1.0), liquidBase, 0.35);
-        vec3 shaded = liquidBase * (0.85 + 0.15 * diff) + specColor * (spec * 0.16);
+        vec3 shaded = liquidBase * (0.90 + 0.25 * diff) + vec3(1.0) * (spec * 0.45 + rim * 0.15);
 
-        // Depth-based transparency: individual droplets remain clearly visible (alpha ~0.7),
-        // while pooled liquids display their translucent depth
-        float depthFactor = clamp(density * 12.0, 0.0, 1.0);
-        float fluidAlpha = boundaryAlpha * mix(0.70, 0.95, depthFactor);
+        float baseAlpha = clamp(density * 6.0, 0.25, 1.0);
+        float fluidAlpha = boundaryAlpha * max(baseAlpha, spec * 0.6);
 
         gl_FragColor = vec4(shaded, fluidAlpha);
     }
@@ -356,8 +417,8 @@ function initPhysics() {
     const psd = new b2ParticleSystemDef();
     psd.radius = PARTICLE_RADIUS;
     psd.dampingStrength = 0.15;
-    psd.viscosityStrength = 0.28;
-    psd.surfaceTensionStrength = 0.20;
+    psd.viscosityStrength = 0.32;
+    psd.surfaceTensionStrength = 0.24;
     psd.colorMixingStrength = 0.10;
 
     particleSystem = world.CreateParticleSystem(psd);
@@ -404,7 +465,7 @@ function spawnLiquid(type, worldX, worldY) {
     const mixingFlag  = typeof b2_colorMixingParticle !== 'undefined' ? b2_colorMixingParticle : 0;
 
     const shape = new b2PolygonShape();
-    const halfSize = (type === 'milk') ? 0.065 : 0.055;
+    const halfSize = (type === 'milk') ? 0.035 : 0.03;
 
     shape.SetAsBoxXYCenterAngle(
         halfSize, halfSize,
@@ -428,11 +489,11 @@ function spawnLiquid(type, worldX, worldY) {
         pgd.linearVelocity = new b2Vec2((Math.random() - 0.5) * 0.05, 3.2);
     } else if (type === 'vodka') {
         pgd.flags = waterFlag | mixingFlag;
-        r = 215; g = 235; b = 250; a = 85; // Clear / crystalline transparent
+        r = 30; g = 30; b = 30; a = 35; // Clear / crystalline transparent
         pgd.linearVelocity = new b2Vec2((Math.random() - 0.5) * 0.1, 4.4);
     } else if (type === 'rum') {
         pgd.flags = waterFlag | mixingFlag;
-        r = 245; g = 240; b = 228; a = 110; // Clear / warm light rum
+        r = 30; g = 30; b = 30; a = 35; // Clear / warm light rum
         pgd.linearVelocity = new b2Vec2((Math.random() - 0.5) * 0.1, 4.2);
     } else if (type === 'lemonade') {
         pgd.flags = waterFlag | mixingFlag;
@@ -468,7 +529,7 @@ function spawnLiquid(type, worldX, worldY) {
         pgd.linearVelocity = new b2Vec2((Math.random() - 0.5) * 0.1, 4.4);
     } else if (type === 'triple-sec') {
         pgd.flags = waterFlag | mixingFlag;
-        r = 230; g = 242; b = 250; a = 80; // Crisp transparent citrus liqueur
+        r = 30; g = 30; b = 30; a = 35; // Crisp transparent citrus liqueur
         pgd.linearVelocity = new b2Vec2((Math.random() - 0.5) * 0.1, 4.3);
     } else if (type === 'tomato-juice') {
         pgd.flags = waterFlag | viscousFlag | mixingFlag;
@@ -476,11 +537,11 @@ function spawnLiquid(type, worldX, worldY) {
         pgd.linearVelocity = new b2Vec2((Math.random() - 0.5) * 0.08, 4.0);
     } else if (type === 'tequila') {
         pgd.flags = waterFlag | mixingFlag;
-        r = 238; g = 244; b = 248; a = 90; // Clean platinum crystal clarity
+        r = 30; g = 30; b = 30; a = 35; // Clean platinum crystal clarity
         pgd.linearVelocity = new b2Vec2((Math.random() - 0.5) * 0.1, 4.4);
     } else if (type === 'coffee-liqueur') {
         pgd.flags = waterFlag | viscousFlag | tensileFlag | mixingFlag;
-        r = 35; g = 15; b = 8; a = 210; // Glossy deep roasted espresso liqueur
+        r = 105; g = 50; b = 20; a = 210; // Glossy deep roasted espresso liqueur
         pgd.linearVelocity = new b2Vec2((Math.random() - 0.5) * 0.08, 3.8);
     } else if (type === 'simple-syrup') {
         pgd.flags = waterFlag | viscousFlag | tensileFlag | mixingFlag;
@@ -627,7 +688,7 @@ function render() {
 
     gl.useProgram(splatProgram);
     gl.uniform2f(gl.getUniformLocation(splatProgram, 'uResolution'), canvas.width, canvas.height);
-    gl.uniform1f(gl.getUniformLocation(splatProgram, 'uPointSize'), PARTICLE_RADIUS * SCALE * 5.2);
+    gl.uniform1f(gl.getUniformLocation(splatProgram, 'uPointSize'), PARTICLE_RADIUS * SCALE * 6.5);
 
     gl.bindBuffer(gl.ARRAY_BUFFER, particlePosBuffer);
     gl.bufferData(gl.ARRAY_BUFFER, pixelCoords, gl.DYNAMIC_DRAW);
@@ -652,7 +713,7 @@ function render() {
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, fboA.texture);
     gl.uniform1i(gl.getUniformLocation(blurProgram, 'uTexture'), 0);
-    gl.uniform2f(gl.getUniformLocation(blurProgram, 'uTexelOffset'), 1.8 / canvas.width, 0.0);
+    gl.uniform2f(gl.getUniformLocation(blurProgram, 'uTexelOffset'), 3.5 / canvas.width, 0.0);
 
     gl.bindBuffer(gl.ARRAY_BUFFER, quadBuffer);
     const qPos1 = gl.getAttribLocation(blurProgram, 'aPosition');
@@ -662,7 +723,7 @@ function render() {
 
     // 3. Vertical Blur pass -> FBO A
     gl.bindFramebuffer(gl.FRAMEBUFFER, fboA.fbo);
-    gl.uniform2f(gl.getUniformLocation(blurProgram, 'uTexelOffset'), 0.0, 1.8 / canvas.height);
+    gl.uniform2f(gl.getUniformLocation(blurProgram, 'uTexelOffset'), 0.0, 3.5 / canvas.height);
     gl.bindTexture(gl.TEXTURE_2D, fboB.texture);
     gl.drawArrays(gl.TRIANGLES, 0, 6);
 
@@ -681,7 +742,12 @@ function render() {
     gl.bindTexture(gl.TEXTURE_2D, fboA.texture);
     gl.uniform1i(gl.getUniformLocation(renderProgram, 'uFluidTexture'), 0);
     gl.uniform2f(gl.getUniformLocation(renderProgram, 'uTexelSize'), 1.0 / canvas.width, 1.0 / canvas.height);
-    gl.uniform1f(gl.getUniformLocation(renderProgram, 'uThreshold'), 0.024);
+    gl.uniform1f(gl.getUniformLocation(renderProgram, 'uThreshold'), 0.008);
+	
+	// Pass shaker position and mode
+    const pos = cupBody.GetPosition();
+    gl.uniform2f(gl.getUniformLocation(renderProgram, 'uCupOffset'), pos.x, pos.y);
+    gl.uniform1i(gl.getUniformLocation(renderProgram, 'uIsMixing'), isMixingMode ? 1 : 0);
 
     gl.bindBuffer(gl.ARRAY_BUFFER, quadBuffer);
     const qPos2 = gl.getAttribLocation(renderProgram, 'aPosition');
@@ -690,7 +756,7 @@ function render() {
     gl.drawArrays(gl.TRIANGLES, 0, 6);
 	
     renderGlassCup(true);
-	renderMeasurementBounds();
+	//renderMeasurementBounds();
 }
 
 // -------------------------------------------------------------
@@ -745,7 +811,7 @@ function renderGlassCup(isOverlay) {
 
     if (!isOverlay) {
         // Solid dark container interior
-        gl.uniform4f(colorLoc, 0.12, 0.14, 0.18, 0.35);
+        gl.uniform4f(colorLoc, 0.10, 0.10, 0.10, 0.30);
         gl.drawArrays(gl.TRIANGLES, 0, triangleCount);
     } else {
         // Solid opaque cup walls & base (blocks all liquid bleed behind walls)
@@ -768,7 +834,7 @@ function loop() {
 	particleSystem.DestroyParticlesInShape(bottomKillShape, identityTransform);
     //mixParticles();
 
-    if (isPointerDown && selectedIngredient && frameCounter % 3 === 0) {
+    if (isPointerDown && selectedIngredient && !isMixingMode) {
 		const worldX = pointerX / SCALE;
 		const worldY = pointerY / SCALE;
 		spawnLiquid(selectedIngredient, worldX, worldY);
@@ -798,37 +864,67 @@ function updatePointerPos(e) {
     pointerY = (clientY - rect.top) * (canvas.height / rect.height);
 }
 
-canvas.addEventListener('mousedown', (e) => {
-    isPointerDown = true;
-    updatePointerPos(e);
-});
+// --- Pointer / Touch Input Handlers ---
 
-window.addEventListener('mousemove', (e) => {
-    if (isPointerDown) {
+function handlePointerStart(e) {
+    updatePointerPos(e);
+    const worldX = pointerX / SCALE;
+
+    if (isMixingMode) {
+        // Touch on or near the shaker initiates dragging
+        if (worldX >= 0.8 && worldX <= 2.8) {
+            isDraggingCup = true;
+            dragStartY = pointerY;
+            cupBaseY = cupBody.GetPosition().y;
+        }
+        isPointerDown = false; // Never spawn liquids in mix mode
+    } else {
+        isPointerDown = true;
+    }
+}
+
+function handlePointerMove(e) {
+    if (isDraggingCup && isMixingMode) {
+        updatePointerPos(e);
+        const deltaY = (pointerY - dragStartY) / SCALE;
+
+        // 10px padding bounds calculated from canvas dimensions:
+        const topLimit = (10 / SCALE) - 1.03;                      // Top roof stays >= 10px from top
+        const bottomLimit = ((canvas.height - 50) / SCALE) - 4.50; // Bottom base stays <= 10px from bottom
+
+        const targetY = Math.max(topLimit, Math.min(bottomLimit, cupBaseY + deltaY));
+        const currentY = cupBody.GetPosition().y;
+
+        cupBody.SetLinearVelocity(new b2Vec2(0, (targetY - currentY) * 35));
+    } else if (isPointerDown && !isMixingMode) {
         updatePointerPos(e);
     }
-});
+}
 
-window.addEventListener('mouseup', () => {
+function handlePointerEnd() {
     isPointerDown = false;
-});
+    if (isDraggingCup) {
+        isDraggingCup = false;
+        cupBody.SetLinearVelocity(new b2Vec2(0, 0));
+    }
+}
 
-// Touch Support for Mobile
+// Mouse Listeners
+canvas.addEventListener('mousedown', handlePointerStart);
+window.addEventListener('mousemove', handlePointerMove);
+window.addEventListener('mouseup', handlePointerEnd);
+
+// Touch Listeners for Mobile / Tablets
 canvas.addEventListener('touchstart', (e) => {
     e.preventDefault();
-    isPointerDown = true;
-    updatePointerPos(e);
+    handlePointerStart(e);
 }, { passive: false });
 
 window.addEventListener('touchmove', (e) => {
-    if (isPointerDown) {
-        updatePointerPos(e);
-    }
-});
+    handlePointerMove(e);
+}, { passive: false });
 
-window.addEventListener('touchend', () => {
-    isPointerDown = false;
-});
+window.addEventListener('touchend', handlePointerEnd);
 
 
 

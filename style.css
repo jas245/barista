@@ -522,3 +522,22 @@ canvas {
         transform: scale(0.85);
     }
 }
+
+.btn-mix {
+    background: #23242e;
+    color: #e5e5ec;
+    border-color: #3b3c4f;
+}
+
+.btn-mix:hover {
+    background: #2f303f;
+    border-color: #6366f1;
+    color: #818cf8;
+}
+
+.btn-mix.active {
+    background: #6366f1;
+    color: #ffffff;
+    border-color: #818cf8;
+    box-shadow: 0 0 16px rgba(99, 102, 241, 0.5);
+}

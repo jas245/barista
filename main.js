@@ -571,7 +571,18 @@ function spawnLiquid(type, worldX, worldY) {
     }
 }
 
-// Particle mixture spatial diffusion
+// --- High-Performance Zero-Allocation Particle Diffusion ---
+
+const DIFFUSION_CELL_SIZE = 0.14;
+const GRID_COLS = 26;
+const GRID_ROWS = 38;
+const TOTAL_CELLS = GRID_COLS * GRID_ROWS;
+const gridHead = new Int32Array(TOTAL_CELLS);
+
+let maxAllocatedParticles = 0;
+let particleNext = new Int32Array(0);
+let scratchColorBuf = new Uint8Array(0);
+
 function mixParticles() {
     const count = particleSystem.GetParticleCount();
     if (count < 2) return;
@@ -580,79 +591,89 @@ function mixParticles() {
     const colorBuffer = particleSystem.GetColorBuffer();
     if (!positions || !colorBuffer) return;
 
-    const radius = 0.15;
-    const radiusSq = radius * radius;
-    const cellSize = radius;
-    const grid = new Map();
+    // Safely clamp to the exact allocated buffer size to avoid RangeError
+    const safeCount = Math.min(count, positions.length >> 1, colorBuffer.length >> 2);
+    if (safeCount < 2) return;
 
-    const nextR = new Uint8Array(count);
-    const nextG = new Uint8Array(count);
-    const nextB = new Uint8Array(count);
-    const nextA = new Uint8Array(count);
-
-    for (let i = 0; i < count; i++) {
-        const cx = Math.floor(positions[i * 2] / cellSize);
-        const cy = Math.floor(positions[i * 2 + 1] / cellSize);
-        const key = cx + ',' + cy;
-        let b = grid.get(key);
-        if (!b) { b = []; grid.set(key, b); }
-        b.push(i);
+    // Resize scratch buffers only when needed
+    if (safeCount > maxAllocatedParticles) {
+        maxAllocatedParticles = safeCount + 400;
+        particleNext = new Int32Array(maxAllocatedParticles);
+        scratchColorBuf = new Uint8Array(maxAllocatedParticles * 4);
     }
 
-    const SELF_WEIGHT = 8.0;
+    gridHead.fill(-1);
+    const invCell = 1.0 / DIFFUSION_CELL_SIZE;
 
-    for (let i = 0; i < count; i++) {
+    // 1. Build spatial linked-list
+    for (let i = 0; i < safeCount; i++) {
+        const cx = (positions[i * 2] * invCell) | 0;
+        const cy = (positions[i * 2 + 1] * invCell) | 0;
+        if (cx >= 0 && cx < GRID_COLS && cy >= 0 && cy < GRID_ROWS) {
+            const cell = cx + cy * GRID_COLS;
+            particleNext[i] = gridHead[cell];
+            gridHead[cell] = i;
+        } else {
+            particleNext[i] = -1;
+        }
+    }
+
+    const radiusSq = DIFFUSION_CELL_SIZE * DIFFUSION_CELL_SIZE;
+    const SELF_WEIGHT = 7.0;
+
+    // 2. Neighbor diffusion
+    for (let i = 0; i < safeCount; i++) {
         const xi = positions[i * 2];
         const yi = positions[i * 2 + 1];
-        const cx = Math.floor(xi / cellSize);
-        const cy = Math.floor(yi / cellSize);
+        const cx = (xi * invCell) | 0;
+        const cy = (yi * invCell) | 0;
 
-        let sumR = (colorBuffer[i * 4]     || 0) * SELF_WEIGHT;
-        let sumG = (colorBuffer[i * 4 + 1] || 0) * SELF_WEIGHT;
-        let sumB = (colorBuffer[i * 4 + 2] || 0) * SELF_WEIGHT;
-        let sumA = (colorBuffer[i * 4 + 3] || 255) * SELF_WEIGHT;
+        const i4 = i * 4;
+        let sumR = colorBuffer[i4]     * SELF_WEIGHT;
+        let sumG = colorBuffer[i4 + 1] * SELF_WEIGHT;
+        let sumB = colorBuffer[i4 + 2] * SELF_WEIGHT;
+        let sumA = colorBuffer[i4 + 3] * SELF_WEIGHT;
         let totalW = SELF_WEIGHT;
 
-        for (let gx = cx - 1; gx <= cx + 1; gx++) {
-            for (let gy = cy - 1; gy <= cy + 1; gy++) {
-                const bucket = grid.get(gx + ',' + gy);
-                if (!bucket) continue;
+        const minX = Math.max(0, cx - 1);
+        const maxX = Math.min(GRID_COLS - 1, cx + 1);
+        const minY = Math.max(0, cy - 1);
+        const maxY = Math.min(GRID_ROWS - 1, cy + 1);
 
-                for (let k = 0; k < bucket.length; k++) {
-                    const j = bucket[k];
-                    if (j === i) continue;
+        for (let gx = minX; gx <= maxX; gx++) {
+            for (let gy = minY; gy <= maxY; gy++) {
+                let j = gridHead[gx + gy * GRID_COLS];
+                while (j !== -1) {
+                    if (j !== i) {
+                        const dx = positions[j * 2] - xi;
+                        const dy = positions[j * 2 + 1] - yi;
+                        const dSq = dx * dx + dy * dy;
 
-                    const dx = positions[j * 2] - xi;
-                    const dy = positions[j * 2 + 1] - yi;
-                    const dSq = dx * dx + dy * dy;
-
-                    if (dSq < radiusSq) {
-                        const dist = Math.sqrt(dSq);
-                        const w = 1.0 - (dist / radius);
-
-                        sumR += (colorBuffer[j * 4]     || 0) * w;
-                        sumG += (colorBuffer[j * 4 + 1] || 0) * w;
-                        sumB += (colorBuffer[j * 4 + 2] || 0) * w;
-                        sumA += (colorBuffer[j * 4 + 3] || 255) * w;
-                        totalW += w;
+                        if (dSq < radiusSq) {
+                            const w = 1.0 - Math.sqrt(dSq) * invCell;
+                            const j4 = j * 4;
+                            sumR += colorBuffer[j4]     * w;
+                            sumG += colorBuffer[j4 + 1] * w;
+                            sumB += colorBuffer[j4 + 2] * w;
+                            sumA += colorBuffer[j4 + 3] * w;
+                            totalW += w;
+                        }
                     }
+                    j = particleNext[j];
                 }
             }
         }
 
         const invW = 1.0 / totalW;
-        nextR[i] = Math.round(sumR * invW);
-        nextG[i] = Math.round(sumG * invW);
-        nextB[i] = Math.round(sumB * invW);
-        nextA[i] = Math.round(sumA * invW);
+        scratchColorBuf[i4]     = (sumR * invW + 0.5) | 0;
+        scratchColorBuf[i4 + 1] = (sumG * invW + 0.5) | 0;
+        scratchColorBuf[i4 + 2] = (sumB * invW + 0.5) | 0;
+        scratchColorBuf[i4 + 3] = (sumA * invW + 0.5) | 0;
     }
 
-    for (let i = 0; i < count; i++) {
-        colorBuffer[i * 4]     = nextR[i];
-        colorBuffer[i * 4 + 1] = nextG[i];
-        colorBuffer[i * 4 + 2] = nextB[i];
-        colorBuffer[i * 4 + 3] = nextA[i];
-    }
+    // 3. Safe copy matching exact buffer bounds
+    const copyLength = safeCount * 4;
+    colorBuffer.set(scratchColorBuf.subarray(0, copyLength));
 }
 
 // Updated render() to send 4-component RGBA data to the splat shader
@@ -831,7 +852,9 @@ function loop() {
 
     // Step Physics
     world.Step(1 / 60, 6, 2);
-	particleSystem.DestroyParticlesInShape(bottomKillShape, identityTransform);
+	if (!isMixingMode) {
+        particleSystem.DestroyParticlesInShape(bottomKillShape, identityTransform);
+    }
     //mixParticles();
 
     if (isPointerDown && selectedIngredient && !isMixingMode) {
@@ -888,14 +911,18 @@ function handlePointerMove(e) {
         updatePointerPos(e);
         const deltaY = (pointerY - dragStartY) / SCALE;
 
-        // 10px padding bounds calculated from canvas dimensions:
-        const topLimit = (10 / SCALE) - 1.03;                      // Top roof stays >= 10px from top
-        const bottomLimit = ((canvas.height - 50) / SCALE) - 4.50; // Bottom base stays <= 10px from bottom
+        // 10px boundary limits
+        const topLimit = (20 / SCALE) - 1.03;                      // Top of shaker >= 10px from top
+        const bottomLimit = ((canvas.height - 30) / SCALE) - 4.50; // Bottom of base <= 10px from bottom
 
         const targetY = Math.max(topLimit, Math.min(bottomLimit, cupBaseY + deltaY));
         const currentY = cupBody.GetPosition().y;
 
-        cupBody.SetLinearVelocity(new b2Vec2(0, (targetY - currentY) * 35));
+        // Calculate smooth velocity towards target, capped at ±14 m/s to prevent physics solver explosions
+        let vy = (targetY - currentY) * 25;
+        vy = Math.max(-14, Math.min(14, vy));
+
+        cupBody.SetLinearVelocity(new b2Vec2(0, vy));
     } else if (isPointerDown && !isMixingMode) {
         updatePointerPos(e);
     }

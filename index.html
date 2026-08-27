@@ -6,6 +6,11 @@
     <title>Aisha the Barista</title>
     <link rel="stylesheet" href="style.css">
     <!-- LiquidFun physics engine -->
+	<script>
+    var Module = {
+        TOTAL_MEMORY: 128 * 1024 * 1024 // Increase memory to 128MB (4x larger)
+    };
+</script>
     <script src="liquidfun.js"></script>
 </head>
 <body>
@@ -51,6 +56,14 @@
 			<aside class="sidebar">
 				<div class="selector-title">Select Liquid</div>
 				<div class="ingredient-group">
+					<button id="btn-ice" class="ingredient-btn" data-type="ice">
+						<span class="indicator indicator-ice"></span>
+						<div class="btn-text"><strong>Ice Cube</strong><small>Cold & Buoyant</small></div>
+					</button>
+					<button id="btn-cherry" class="ingredient-btn" data-type="cherry">
+						<span class="indicator indicator-cherry"></span>
+						<div class="btn-text"><strong>Cherry</strong><small>Sweet & Glossy</small></div>
+					</button>
 					<button id="btn-espresso" class="ingredient-btn active" data-type="espresso">
 						<span class="indicator indicator-espresso"></span>
 						<div class="btn-text"><strong>Espresso</strong><small>Rich Dark Roast</small></div>
@@ -122,7 +135,8 @@
 				</div>
 			</aside>
 		</div>
-    </div>
+    
+	</div>
 
     <script src="main.js"></script>
 </body>

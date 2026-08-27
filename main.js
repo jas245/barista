@@ -40,6 +40,640 @@ bottomKillShape.SetAsBoxXYCenterAngle(10.0, 0.5, new b2Vec2(0.0, 5.0), 0);
 const identityTransform = new b2Transform();
 identityTransform.SetIdentity();
 
+// --- Sloshing Sound Controller ---
+const sloshAudio = new Audio('slosh.mp3');
+sloshAudio.loop = true;
+let isSloshingPlaying = false;
+
+function updateSloshAudio(velocity) {
+    if (!isMixingMode || !isDraggingCup) {
+        if (isSloshingPlaying) {
+            sloshAudio.pause();
+            isSloshingPlaying = false;
+        }
+        return;
+    }
+
+    const speed = Math.abs(velocity);
+    if (speed > 1.2) {
+        sloshAudio.volume = Math.min(1.0, (speed - 1.0) / 10.0);
+        if (!isSloshingPlaying) {
+            sloshAudio.play().catch(() => {});
+            isSloshingPlaying = true;
+        }
+    } else if (isSloshingPlaying) {
+        sloshAudio.pause();
+        isSloshingPlaying = false;
+    }
+}
+
+
+let bgTexture;
+
+function initBgTexture() {
+    bgTexture = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, bgTexture);
+    // Temporary 1x1 placeholder pixel while image loads
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([30, 18, 12, 255]));
+
+    const img = new Image();
+    img.src = 'background1.jpg'; // Path to the bar background image
+    img.onload = () => {
+        gl.bindTexture(gl.TEXTURE_2D, bgTexture);
+		gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
+    };
+}
+
+// Carbonation strength per ingredient (0.0 = still, 1.0 = highly carbonated)
+const CARBONATION_MAP = {
+    'champagne': 1.0,
+    'ginger-beer': 0.85,
+    'lemonade': 0.60
+};
+
+function calculateMixtureCarbonation() {
+    const count = particleSystem.GetParticleCount();
+    if (count === 0) return 0.0;
+    let totalFizz = 0.0;
+    for (let i = 0; i < count; i++) {
+        totalFizz += CARBONATION_MAP[particleTypes[i]] || 0.0;
+    }
+    return totalFizz / count; // Returns exact proportional fizz of the blend
+}
+
+const glassVS = `
+    attribute vec2 aPosition;
+    varying vec2 vUv;
+    void main() {
+        vUv = aPosition * 0.5 + 0.5;
+        gl_Position = vec4(aPosition, 0.0, 1.0);
+    }
+`;
+
+const glassFS = `
+    precision mediump float;
+    uniform sampler2D uFluidTexture;
+    uniform vec2 uResolution;
+    uniform vec2 uTexelSize;
+    uniform vec2 uCupOffset;
+    uniform bool uIsFrontPass;
+    uniform bool uIsMixing;
+    varying vec2 vUv;
+
+    void main() {
+        float worldX = (vUv.x / (uTexelSize.x * 100.0)) - uCupOffset.x;
+        float worldY = ((1.0 - vUv.y) / (uTexelSize.y * 100.0)) - uCupOffset.y;
+
+        // Bottom Cup Geometry
+        float yBottomLip = 2.72;
+        float yBottomFloor = 4.45;
+        float yBaseBottom = 4.60;
+
+        float leftOuter  = 1.07 + (worldY - 3.60) * 0.0913;
+        float rightOuter = 2.53 - (worldY - 3.60) * 0.0913;
+        float leftInner  = 1.15 + (worldY - 3.60) * 0.0913;
+        float rightInner = 2.45 - (worldY - 3.60) * 0.0913;
+
+        float baseLeft  = 1.04;
+        float baseRight = 2.56;
+
+        // Top Inverted Shaker Geometry
+        float yTopRoof = 1.04;
+        float topLeftOuter  = 1.07 - (worldY - 1.92) * 0.0913;
+        float topRightOuter = 2.53 + (worldY - 1.92) * 0.0913;
+        float topLeftInner  = 1.15 - (worldY - 1.92) * 0.0913;
+        float topRightInner = 2.45 + (worldY - 1.92) * 0.0913;
+
+        float minY = (uIsMixing) ? yTopRoof : yBottomLip;
+
+        if (worldY < minY || worldY > yBaseBottom) discard;
+
+        // Regions
+        bool isBottomWall = (worldY >= yBottomLip && worldY <= yBottomFloor) && 
+                            ((worldX >= leftOuter && worldX <= leftInner) || (worldX >= rightInner && worldX <= rightOuter));
+        bool isHeavyBase  = (worldY >= yBottomFloor && worldY <= yBaseBottom && worldX >= baseLeft && worldX <= baseRight);
+        bool isBottomBack = (worldY >= yBottomLip && worldY <= yBottomFloor && worldX > leftInner && worldX < rightInner);
+        bool isBottomRim  = (worldY >= yBottomLip && worldY <= yBottomLip + 0.06 && worldX >= leftOuter && worldX <= rightOuter);
+
+        bool isTopWall = uIsMixing && (worldY >= yTopRoof + 0.06 && worldY < yBottomLip) &&
+                         ((worldX >= topLeftOuter && worldX <= topLeftInner) || (worldX >= topRightInner && worldX <= topRightOuter));
+        bool isTopRoof = uIsMixing && (worldY >= yTopRoof && worldY <= yTopRoof + 0.08 && worldX >= 1.08 && worldX <= 2.52);
+        bool isTopBack = uIsMixing && (worldY >= yTopRoof + 0.08 && worldY < yBottomLip && worldX > topLeftInner && worldX < topRightInner);
+
+        vec3 crystalTint = vec3(1.0, 0.94, 0.86);
+        vec3 lightDir = normalize(vec3(-0.35, 0.75, 0.55));
+		vec3 warmGlintColor = vec3(1.0, 0.92, 0.75); // Amber/gold specular gleams
+
+        if (!uIsFrontPass) {
+            // ==================== PASS 1: BACK GLASS & BASE ====================
+            if (isBottomBack || isTopBack) {
+                float bowlDist = abs((worldX - 1.80) / 0.65);
+                float backRefraction = pow(bowlDist, 2.0) * 0.08;
+                gl_FragColor = vec4(crystalTint * 1.05, backRefraction);
+            } else if (isHeavyBase || isTopRoof) {
+                float baseUvX = abs(worldX - 1.80) / 0.72;
+                float bevel = smoothstep(0.95, 0.70, baseUvX);
+                gl_FragColor = vec4(crystalTint * 0.95, 0.25 + 0.20 * (1.0 - bevel));
+            } else {
+                discard;
+            }
+        } else {
+            // ==================== PASS 2: FRONT OPTICAL REFRACTION & SPECULAR ====================
+            if (isBottomWall || isBottomRim || isHeavyBase || isTopWall || isTopRoof) {
+                float lOuter = (worldY < yBottomLip && uIsMixing) ? topLeftOuter : leftOuter;
+                float lInner = (worldY < yBottomLip && uIsMixing) ? topLeftInner : leftInner;
+                float rInner = (worldY < yBottomLip && uIsMixing) ? topRightInner : rightInner;
+                float rOuter = (worldY < yBottomLip && uIsMixing) ? topRightOuter : rightOuter;
+
+                // Surface normal across the curved glass thickness
+                float nx = (worldX < 1.80) ? (lOuter - worldX) / (lInner - lOuter) 
+                                           : (worldX - rInner) / (rOuter - rInner);
+                nx = clamp(nx, -1.0, 1.0);
+                vec3 normal = normalize(vec3(nx * 1.8, 0.0, 1.0));
+
+                // 1. Refraction through Glass Wall Thickness (Snell's Law distortion)
+                vec2 refractedUv = vUv + vec2(normal.x * 0.022, 0.0);
+                vec4 fluidSample = texture2D(uFluidTexture, refractedUv);
+                float fluidDensity = fluidSample.a;
+                vec3 fluidColor = (fluidDensity > 0.01) ? (fluidSample.rgb / max(fluidDensity, 0.0001)) : vec3(1.0);
+                float hasFluid = smoothstep(0.01, 0.15, fluidDensity);
+
+                vec3 transmitted = mix(crystalTint, fluidColor * 0.95 + crystalTint * 0.10, hasFluid * 0.75);
+
+                // 2. Studio Specular Strips & Fresnel
+                float studioStripL = pow(max(dot(normal, lightDir), 0.0), 28.0) * 0.75;
+                float studioStripR = pow(max(dot(normal, vec3(0.5, 0.4, 0.7)), 0.0), 20.0) * 0.45;
+                float edgeFresnel  = pow(clamp(1.0 - normal.z, 0.0, 1.0), 2.8) * 0.70;
+                float lipHighlight = isBottomRim ? pow(smoothstep(yBottomLip + 0.05, yBottomLip, worldY), 2.0) * 0.85 : 0.0;
+
+                vec3 specularGlints = warmGlintColor * (studioStripL * 1.1 + studioStripR * 0.6 + edgeFresnel + lipHighlight);
+                vec3 frontShaded = transmitted * 0.28 + specularGlints;
+                float frontAlpha = clamp(studioStripL + studioStripR + edgeFresnel * 0.80 + lipHighlight + (hasFluid * 0.35) + 0.10, 0.0, 0.95);
+
+                gl_FragColor = vec4(frontShaded, frontAlpha);
+            } else {
+                discard;
+            }
+        }
+    }
+`;
+
+function renderGlassware(isFrontPass) {
+    gl.useProgram(glassProgram);
+    gl.uniform2f(gl.getUniformLocation(glassProgram, 'uResolution'), canvas.width, canvas.height);
+    gl.uniform2f(gl.getUniformLocation(glassProgram, 'uTexelSize'), 1.0 / canvas.width, 1.0 / canvas.height);
+    
+    const pos = cupBody ? cupBody.GetPosition() : { x: 0, y: 0 };
+    gl.uniform2f(gl.getUniformLocation(glassProgram, 'uCupOffset'), pos.x, pos.y);
+    gl.uniform1i(gl.getUniformLocation(glassProgram, 'uIsFrontPass'), isFrontPass ? 1 : 0);
+	gl.uniform1i(gl.getUniformLocation(glassProgram, 'uIsMixing'), isMixingMode ? 1 : 0);
+	
+	// Pass fluid texture so front glass wall refracts the drink and table behind it
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, fboA.texture);
+    gl.uniform1i(gl.getUniformLocation(glassProgram, 'uFluidTexture'), 0);
+
+    gl.bindBuffer(gl.ARRAY_BUFFER, quadBuffer);
+    const posAttr = gl.getAttribLocation(glassProgram, 'aPosition');
+    gl.enableVertexAttribArray(posAttr);
+    gl.vertexAttribPointer(posAttr, 2, gl.FLOAT, false, 0, 0);
+
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
+}
+
+let glassProgram;
+
+const bgVS = `
+    attribute vec2 aPosition;
+    varying vec2 vUv;
+    void main() {
+        vUv = aPosition * 0.5 + 0.5;
+        gl_Position = vec4(aPosition, 0.0, 1.0);
+    }
+`;
+
+const bgFS = `
+    precision mediump float;
+    uniform sampler2D uFluidTexture;
+    uniform sampler2D uBgTexture;
+    uniform vec2 uResolution;
+    uniform vec2 uCupOffset;
+    varying vec2 vUv;
+
+    void main() {
+        // Sample the background bar image with matching aspect ratio crop
+        // 1. Center-crop the wide (16:9) image horizontally to fit the portrait canvas without squishing:
+        float imgAspect = 625.0 / 350.0;
+        float canvasAspect = uResolution.x / uResolution.y; // 360/480 = 0.75
+        
+        vec2 bgUv = vUv;
+        bgUv.x = (bgUv.x - 0.5) * (canvasAspect / imgAspect) * 1.0 + 0.5; // Horizontal center-crop & zoom
+        bgUv.y = bgUv.y * 0.70 + 0.18; // Adjust vertical crop: pushes wooden table right under the cup
+
+        vec3 sceneBg = texture2D(uBgTexture, bgUv).rgb;
+
+        float tableY = 0.085; // Countertop horizon line
+
+        // Sample cup base fluid color & density
+        vec4 fluidSample = texture2D(uFluidTexture, vec2(0.5 + uCupOffset.x * 0.1, 0.14 - uCupOffset.y * 0.1));
+        float liquidAmount = clamp(fluidSample.a * 6.0, 0.0, 1.0);
+        vec3 liquidColor = (fluidSample.a > 0.01) ? (fluidSample.rgb / fluidSample.a) : vec3(1.0);
+
+        // Warm ambient bar lighting adjustments & contact shadow on wooden bar
+        if (vUv.y <= tableY) {
+            float cupLift = max(0.0, -uCupOffset.y);
+            float dx = (vUv.x - (0.5 + uCupOffset.x * 0.1)) / (0.20 + cupLift * 0.15);
+            float dy = (tableY - vUv.y) * (20.0 / (1.0 + cupLift * 3.0));
+
+            // Deep, warm contact shadow
+            float contactShadow = exp(-dx * dx * 1.8 - dy * dy * 5.5) * 0.65 * exp(-cupLift * 12.0);
+            sceneBg *= (1.0 - contactShadow);
+
+            // Warm golden & liquid caustic pool under the glass
+            float causticPattern = exp(-dx * dx * 4.0 - dy * dy * 14.0) * exp(-cupLift * 7.0);
+            vec3 warmCaustic = mix(vec3(1.0, 0.65, 0.25), liquidColor * 1.4, liquidAmount * 0.85);
+            sceneBg += warmCaustic * causticPattern * 0.45;
+        }
+
+        gl_FragColor = vec4(sceneBg, 1.0);
+    }
+`;
+
+let bgProgram;
+
+function renderBackground() {
+    gl.useProgram(bgProgram);
+    gl.uniform2f(gl.getUniformLocation(bgProgram, 'uResolution'), canvas.width, canvas.height);
+    
+    const pos = cupBody ? cupBody.GetPosition() : { x: 0, y: 0 };
+    gl.uniform2f(gl.getUniformLocation(bgProgram, 'uCupOffset'), pos.x, pos.y);
+	
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, fboA.texture);
+    gl.uniform1i(gl.getUniformLocation(bgProgram, 'uFluidTexture'), 0);
+
+    // Bind bar background texture to Unit 1
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, bgTexture);
+    gl.uniform1i(gl.getUniformLocation(bgProgram, 'uBgTexture'), 1);
+
+    gl.bindBuffer(gl.ARRAY_BUFFER, quadBuffer);
+    const posAttr = gl.getAttribLocation(bgProgram, 'aPosition');
+    gl.enableVertexAttribArray(posAttr);
+    gl.vertexAttribPointer(posAttr, 2, gl.FLOAT, false, 0, 0);
+
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
+}
+
+//ICE Shaders
+const iceVS = `
+    attribute vec2 aPosition;
+    uniform vec2 uResolution;
+    uniform vec2 uCenter;
+    uniform float uAngle;
+    uniform vec2 uHalfSize;
+    varying vec2 vLocalPos;
+    varying vec2 vScreenUv;
+
+    void main() {
+        mat2 rot = mat2(cos(uAngle), -sin(uAngle), sin(uAngle), cos(uAngle));
+        vec2 worldPos = uCenter + rot * (aPosition * uHalfSize);
+        vec2 zeroToOne = (worldPos * 100.0) / uResolution;
+        vec2 clipSpace = (zeroToOne * 2.0) - 1.0;
+        gl_Position = vec4(clipSpace * vec2(1.0, -1.0), 0.0, 1.0);
+        vLocalPos = aPosition;
+        vScreenUv = vec2(zeroToOne.x, 1.0 - zeroToOne.y);
+    }
+`;
+
+const iceFS = `
+    precision mediump float;
+    uniform sampler2D uFluidTexture;
+    uniform vec2 uTexelSize;
+    varying vec2 vLocalPos;
+    varying vec2 vScreenUv;
+
+    vec2 hash2(vec2 p) {
+        p = vec2(dot(p, vec2(127.1, 311.7)), dot(p, vec2(269.5, 183.3)));
+        return fract(sin(p) * 43758.5453123);
+    }
+
+    float voronoi(vec2 p) {
+        vec2 n = floor(p);
+        vec2 f = fract(p);
+        float md = 8.0;
+        for (int j = -1; j <= 1; j++) {
+            for (int i = -1; i <= 1; i++) {
+                vec2 g = vec2(float(i), float(j));
+                vec2 o = hash2(n + g);
+                vec2 r = g + o - f;
+                float d = dot(r, r);
+                if (d < md) md = d;
+            }
+        }
+        return sqrt(md);
+    }
+
+    void main() {
+        // Domain-warping for natural melting / organic ice surface
+        vec2 warp = vec2(sin(vLocalPos.y * 6.0 + 1.2), cos(vLocalPos.x * 6.0 + 0.8)) * 0.05;
+        vec2 p = vLocalPos + warp;
+
+        // Rounded wobbly box SDF
+        vec2 d = abs(p) - vec2(0.82);
+        float dist = length(max(d, 0.0)) + min(max(d.x, d.y), 0.0) - 0.12;
+        if (dist > 0.0) discard;
+
+        // Multi-octave internal caustics, bubbles, and stress fractures
+        float v1 = voronoi(p * 3.2);
+        float v2 = voronoi(p * 7.5 + vec2(1.7, 3.2));
+        float v3 = voronoi(p * 14.0);
+
+        // Sharp caustic ribbons & fracture facets (as seen in the reference)
+        float caustics = pow(1.0 - abs(sin(v1 * 4.5)), 4.0) * 0.65;
+        float cracks   = smoothstep(0.06, 0.0, v2) * 0.45;
+        float bubbles  = smoothstep(0.04, 0.0, v3) * 0.35;
+        float internalGlints = caustics + cracks + bubbles;
+
+        // Faceted normal perturbation for glassy refraction
+        vec2 normal2D = normalize(vLocalPos) * smoothstep(-0.3, 0.0, dist);
+        normal2D += vec2(v1 - 0.5, v2 - 0.5) * 0.42;
+        normal2D += vec2(cos(v3 * 6.28), sin(v3 * 6.28)) * 0.15;
+
+        // Refraction offset sampling fluid behind the ice
+        vec2 refractedUv = vScreenUv + normal2D * 0.035;
+        vec4 sampleDirect = texture2D(uFluidTexture, refractedUv);
+        vec4 sampleSideL  = texture2D(uFluidTexture, vec2(vScreenUv.x - 0.08, vScreenUv.y));
+        vec4 sampleSideR  = texture2D(uFluidTexture, vec2(vScreenUv.x + 0.08, vScreenUv.y));
+
+        float fluidDensity = max(sampleDirect.a, max(sampleSideL.a, sampleSideR.a));
+        vec3 fluidColor = (sampleDirect.a > 0.01) ? (sampleDirect.rgb / max(sampleDirect.a, 0.0001)) :
+                          (sampleSideL.a > 0.01)  ? (sampleSideL.rgb / max(sampleSideL.a, 0.0001)) :
+                          (sampleSideR.rgb / max(sampleSideR.a, 0.0001));
+
+        float isSubmerged = smoothstep(0.006, 0.035, fluidDensity);
+
+        // Crystal base & caustic light transmission
+        vec3 crystalClear = vec3(0.88, 0.95, 1.0);
+        vec3 submergedBase = fluidColor * 1.05 + vec3(0.04);
+        vec3 transmitted = mix(crystalClear, submergedBase, isSubmerged);
+
+        // 3D normals for multi-angle specular gleams
+        vec3 n3D = normalize(vec3(normal2D * 2.2, 1.0));
+        vec3 light1 = normalize(vec3(-0.4, 0.7, 0.65));
+        vec3 light2 = normalize(vec3(0.6, 0.5, 0.60));
+
+        // High-gloss specular reflections on wet melting facets
+        float spec1 = pow(max(dot(n3D, light1), 0.0), 36.0);
+        float spec2 = pow(max(dot(n3D, light2), 0.0), 24.0) * 0.5;
+        float rim   = pow(1.0 - max(dot(n3D, vec3(0.0, 0.0, 1.0)), 0.0), 2.8);
+
+        // Caustic highlight tint
+        vec3 highlightColor = mix(vec3(0.95, 0.98, 1.0), fluidColor * 1.4 + vec3(0.3), isSubmerged * 0.5);
+        vec3 highlights = internalGlints * highlightColor;
+
+        // Final optical composite
+        vec3 finalColor = transmitted * 0.78 + highlights * 0.75 + vec3(1.0) * (spec1 * 0.85 + spec2 + rim * 0.65);
+        float alpha = smoothstep(0.0, -0.03, dist) * mix(0.85, 0.98, clamp(internalGlints + rim, 0.0, 1.0));
+
+        gl_FragColor = vec4(finalColor, alpha);
+    }
+`;
+
+let iceProgram, iceQuadBuffer;
+let iceCubes = [];
+let lastIceSpawnTime = 0;
+
+function spawnIce(worldX, worldY) {
+    const bodyDef = new b2BodyDef();
+    bodyDef.type = b2_dynamicBody;
+    bodyDef.position.Set(worldX, worldY);
+
+    const body = world.CreateBody(bodyDef);
+    const shape = new b2PolygonShape();
+    shape.SetAsBoxXY(0.16, 0.16); // Ice cube half-dimensions
+
+    const fixtureDef = new b2FixtureDef();
+    fixtureDef.shape = shape;
+    fixtureDef.density = 0.92; // Lower density than liquid so it floats
+    fixtureDef.friction = 0.0;
+    fixtureDef.restitution = 0.1;
+    body.CreateFixtureFromDef(fixtureDef);
+
+    iceCubes.push(body);
+}
+
+function applyIceBuoyancy() {
+    const positions = particleSystem.GetPositionBuffer();
+    const pCount = particleSystem.GetParticleCount();
+    if (!positions || pCount === 0) return;
+
+    const sampleRadiusSq = 0.22 * 0.22;
+
+    // Apply buoyancy for cherries in the same loop
+	const allSolids = iceCubes.concat(cherries);
+	for (let k = 0; k < allSolids.length; k++) {
+		const solid = allSolids[k];
+		const pos = solid.GetPosition();
+		const vel = solid.GetLinearVelocity();
+		let submergedCount = 0;
+
+		for (let i = 0; i < pCount; i += 3) {
+			const dx = positions[i * 2] - pos.x;
+			const dy = positions[i * 2 + 1] - pos.y;
+			if (dx * dx + dy * dy < sampleRadiusSq) {
+				submergedCount++;
+			}
+		}
+
+		if (submergedCount > 2) {
+			const buoyancy = Math.min(submergedCount / 28.0, 1.15);
+			solid.ApplyForce(new b2Vec2(0, -12.2 * buoyancy * solid.GetMass()), solid.GetWorldCenter());
+			vel.x *= 0.94;
+			vel.y *= 0.94;
+			solid.SetAngularVelocity(solid.GetAngularVelocity() * 0.92);
+		}
+	}
+}
+
+
+function renderIceCubes() {
+    if (iceCubes.length === 0) return;
+
+    gl.useProgram(iceProgram);
+    gl.uniform2f(gl.getUniformLocation(iceProgram, 'uResolution'), canvas.width, canvas.height);
+    gl.uniform2f(gl.getUniformLocation(iceProgram, 'uTexelSize'), 1.0 / canvas.width, 1.0 / canvas.height);
+
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, fboA.texture);
+    gl.uniform1i(gl.getUniformLocation(iceProgram, 'uFluidTexture'), 0);
+
+    gl.bindBuffer(gl.ARRAY_BUFFER, iceQuadBuffer);
+    const posAttr = gl.getAttribLocation(iceProgram, 'aPosition');
+    gl.enableVertexAttribArray(posAttr);
+    gl.vertexAttribPointer(posAttr, 2, gl.FLOAT, false, 0, 0);
+
+    for (let i = 0; i < iceCubes.length; i++) {
+        const body = iceCubes[i];
+        const pos = body.GetPosition();
+        const angle = body.GetAngle();
+
+        gl.uniform2f(gl.getUniformLocation(iceProgram, 'uCenter'), pos.x, pos.y);
+        gl.uniform1f(gl.getUniformLocation(iceProgram, 'uAngle'), angle);
+        gl.uniform2f(gl.getUniformLocation(iceProgram, 'uHalfSize'), 0.16, 0.16);
+
+        gl.drawArrays(gl.TRIANGLES, 0, 6);
+    }
+}
+
+const cherryVS = `
+    attribute vec2 aPosition;
+    uniform vec2 uResolution;
+    uniform vec2 uCenter;
+    uniform float uAngle;
+    uniform vec2 uHalfSize;
+    varying vec2 vLocalPos;
+    varying vec2 vScreenUv;
+
+    void main() {
+        mat2 rot = mat2(cos(uAngle), -sin(uAngle), sin(uAngle), cos(uAngle));
+        vec2 worldPos = uCenter + rot * (aPosition * uHalfSize);
+        vec2 zeroToOne = (worldPos * 100.0) / uResolution;
+        vec2 clipSpace = (zeroToOne * 2.0) - 1.0;
+        gl_Position = vec4(clipSpace * vec2(1.0, -1.0), 0.0, 1.0);
+        vLocalPos = aPosition;
+        vScreenUv = vec2(zeroToOne.x, 1.0 - zeroToOne.y);
+    }
+`;
+
+const cherryFS = `
+    precision mediump float;
+    uniform sampler2D uFluidTexture;
+    uniform vec2 uTexelSize;
+    varying vec2 vLocalPos;
+    varying vec2 vScreenUv;
+
+    void main() {
+        // --- 1. Plump Cherry Body (Cleft at top, round at bottom) ---
+        vec2 bp = vec2(abs(vLocalPos.x), vLocalPos.y);
+        float cleft = smoothstep(0.0, 0.35, bp.x) * 0.08;
+        float bodyDist = length(vec2(bp.x - 0.20, bp.y - cleft + 0.05)) - 0.42;
+
+        // --- 2. Upward Stem (Arches towards top of screen) ---
+        vec2 sp = vec2(vLocalPos.x, -vLocalPos.y); // Negative Y points upwards
+        sp.y -= 0.22; // Emerges from top cleft
+        float stemProgress = clamp(sp.y / 0.55, 0.0, 1.0);
+        float stemCurveX = 0.16 * pow(stemProgress, 1.3);
+        float stemSegY = clamp(sp.y, 0.0, 0.55);
+        float stemDist = length(vec2(sp.x - stemCurveX, sp.y - stemSegY)) - 0.024;
+
+        if (bodyDist > 0.0 && stemDist > 0.0) discard;
+
+        // Surface normals
+        vec2 normal2D = (bodyDist <= 0.0) 
+            ? normalize(vec2(vLocalPos.x * 1.3, vLocalPos.y)) 
+            : vec2(0.8, -0.2);
+
+        // Fluid submersion sampling
+        vec2 refractedUv = vScreenUv + normal2D * 0.02;
+        vec4 sampleDirect = texture2D(uFluidTexture, refractedUv);
+        vec4 sampleSideL  = texture2D(uFluidTexture, vec2(vScreenUv.x - 0.08, vScreenUv.y));
+        vec4 sampleSideR  = texture2D(uFluidTexture, vec2(vScreenUv.x + 0.08, vScreenUv.y));
+
+        float fluidDensity = max(sampleDirect.a, max(sampleSideL.a, sampleSideR.a));
+        vec3 fluidColor = (sampleDirect.a > 0.01) ? (sampleDirect.rgb / max(sampleDirect.a, 0.0001)) :
+                          (sampleSideL.a > 0.01)  ? (sampleSideL.rgb / max(sampleSideL.a, 0.0001)) :
+                          (sampleSideR.rgb / max(sampleSideR.a, 0.0001));
+
+        float isSubmerged = smoothstep(0.008, 0.035, fluidDensity);
+
+        // Top-left illumination
+        vec3 lightDir = normalize(vec3(-0.4, -0.65, 0.75));
+        vec3 n3D = normalize(vec3(normal2D * 1.8, 1.0));
+        float diff = clamp(dot(n3D, lightDir) * 0.6 + 0.4, 0.0, 1.0);
+        float spec = pow(max(dot(n3D, lightDir), 0.0), 36.0);
+        float rim  = pow(1.0 - max(dot(n3D, vec3(0.0, 0.0, 1.0)), 0.0), 2.5);
+
+        vec3 finalColor = vec3(0.0);
+        float alpha = 1.0;
+
+        if (bodyDist <= 0.0) {
+            // Ruby red gradient with glossy depth
+            vec3 deepRed = mix(vec3(0.92, 0.04, 0.12), vec3(0.35, 0.005, 0.03), clamp(length(vLocalPos + vec2(0.12, 0.1)), 0.0, 1.0));
+            vec3 submergedTone = mix(deepRed, deepRed * 0.4 + fluidColor * 0.7, isSubmerged);
+
+            finalColor = submergedTone * (0.75 + 0.35 * diff) + vec3(1.0) * (spec * 0.85 + rim * 0.30);
+            alpha = smoothstep(0.0, -0.025, bodyDist);
+        } else {
+            // Olive green to brown curved stem
+            vec3 stemColor = mix(vec3(0.48, 0.64, 0.20), vec3(0.42, 0.30, 0.12), stemProgress);
+            vec3 submergedStem = mix(stemColor, stemColor * 0.5 + fluidColor * 0.5, isSubmerged);
+            finalColor = submergedStem * diff + vec3(1.0) * (spec * 0.35);
+            alpha = smoothstep(0.0, -0.015, stemDist);
+        }
+
+        gl_FragColor = vec4(finalColor, alpha);
+    }
+`;
+
+let cherryProgram, cherryQuadBuffer;
+let cherries = [];
+let lastCherrySpawnTime = 0;
+
+function spawnCherry(worldX, worldY) {
+    const bodyDef = new b2BodyDef();
+    bodyDef.type = b2_dynamicBody;
+    bodyDef.position.Set(worldX, worldY);
+
+    const body = world.CreateBody(bodyDef);
+    const shape = new b2PolygonShape();
+    shape.SetAsBoxXY(0.08, 0.08);
+
+    const fixtureDef = new b2FixtureDef();
+    fixtureDef.shape = shape;
+    fixtureDef.density = 0.90; // Same buoyancy density as ice
+    fixtureDef.friction = 0.0;
+    fixtureDef.restitution = 0.08;
+    body.CreateFixtureFromDef(fixtureDef);
+
+    cherries.push(body);
+}
+
+function renderCherries() {
+    if (cherries.length === 0) return;
+
+    gl.useProgram(cherryProgram);
+    gl.uniform2f(gl.getUniformLocation(cherryProgram, 'uResolution'), canvas.width, canvas.height);
+    gl.uniform2f(gl.getUniformLocation(cherryProgram, 'uTexelSize'), 1.0 / canvas.width, 1.0 / canvas.height);
+
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, fboA.texture);
+    gl.uniform1i(gl.getUniformLocation(cherryProgram, 'uFluidTexture'), 0);
+
+    gl.bindBuffer(gl.ARRAY_BUFFER, cherryQuadBuffer);
+    const posAttr = gl.getAttribLocation(cherryProgram, 'aPosition');
+    gl.enableVertexAttribArray(posAttr);
+    gl.vertexAttribPointer(posAttr, 2, gl.FLOAT, false, 0, 0);
+
+    for (let i = 0; i < cherries.length; i++) {
+        const body = cherries[i];
+        const pos = body.GetPosition();
+        const angle = body.GetAngle();
+
+        gl.uniform2f(gl.getUniformLocation(cherryProgram, 'uCenter'), pos.x, pos.y);
+        gl.uniform1f(gl.getUniformLocation(cherryProgram, 'uAngle'), angle);
+        gl.uniform2f(gl.getUniformLocation(cherryProgram, 'uHalfSize'), 0.20, 0.24); // Quad bounding size
+
+        gl.drawArrays(gl.TRIANGLES, 0, 6);
+    }
+}
+
+
 let isMixingMode = false;
 let isDraggingCup = false;
 let dragStartY = 0;
@@ -79,6 +713,7 @@ function toggleShakerMode() {
         cupBody.SetTransform(new b2Vec2(0, 0), 0);
         cupBody.SetType(b2_staticBody);
     }
+	updateSloshAudio(0);
 }
 
 document.getElementById('btn-mix').addEventListener('click', () => {
@@ -213,10 +848,9 @@ const splatFS = `
         float rSq = dot(coord, coord);
         if (rSq > 1.0) discard;
 
-        // Full geometric density kernel
         float density = (1.0 - rSq) * (1.0 - rSq) * 0.055;
         
-        // Weight both color and alpha by the particle's intrinsic opacity
+        // Weight both color and density by particle optical opacity
         float weight = vColor.a * density;
         gl_FragColor = vec4(vColor.rgb * weight, weight);
     }
@@ -229,14 +863,21 @@ const renderFS = `
     uniform float uThreshold;
     uniform vec2 uCupOffset;
     uniform bool uIsMixing;
+    uniform float uTime;
     varying vec2 vUv;
+    uniform float uCarbonation;
+
+    // Fast 2D hash for sparkling bubble seeds
+    float hash21(vec2 p) {
+        p = fract(p * vec2(234.34, 435.345));
+        p += dot(p, p + 34.23);
+        return fract(p.x * p.y);
+    }
 
     void main() {
-        // Convert to local cup coordinates
         float worldX = (vUv.x / (uTexelSize.x * 100.0)) - uCupOffset.x;
         float worldY = ((1.0 - vUv.y) / (uTexelSize.y * 100.0)) - uCupOffset.y;
 
-        // Cup bounds (slanted walls, floor, and shaker roof)
         float minX = 1.15 + (worldY - 3.60) * 0.0913;
         float maxX = 2.45 - (worldY - 3.60) * 0.0913;
         if (uIsMixing && worldY < 2.76) {
@@ -252,35 +893,78 @@ const renderFS = `
         vec4 sampleCenter = texture2D(uFluidTexture, vUv);
         float density = sampleCenter.a;
 
-        float boundaryAlpha = smoothstep(uThreshold - 0.003, uThreshold + 0.003, density);
-        if (boundaryAlpha < 0.01) {
-            discard;
-        }
+        // Crisp 1-pixel surface boundary (eliminates the top blurry rim)
+        float boundaryAlpha = smoothstep(uThreshold, uThreshold + 0.001, density);
+        if (boundaryAlpha < 0.01) discard;
 
+        // Extract true liquid color & its inherent opacity
         vec3 liquidBase = clamp(sampleCenter.rgb / max(density, 0.0001), 0.0, 1.0);
+        float bulkDensity = max(density, texture2D(uFluidTexture, vUv - vec2(0.0, uTexelSize.y * 10.0)).a);
+        
+        // Inherent drink opacity: Espresso/Milk = 1.0 (opaque), Lemonade = ~0.65, Vodka = ~0.30
+        float liquidOpacity = clamp(bulkDensity * 4.2, 0.28, 1.0);
 
         float left   = texture2D(uFluidTexture, vUv - vec2(uTexelSize.x * 4.0, 0.0)).a;
         float right  = texture2D(uFluidTexture, vUv + vec2(uTexelSize.x * 4.0, 0.0)).a;
         float top    = texture2D(uFluidTexture, vUv + vec2(0.0, uTexelSize.y * 4.0)).a;
         float bottom = texture2D(uFluidTexture, vUv - vec2(0.0, uTexelSize.y * 4.0)).a;
 
-        vec2 gradient = vec2(right - left, top - bottom);
-        vec3 normal = normalize(vec3(gradient * 8.0, 1.0));
+        vec2 gradient = vec2(right - left, bottom - top);
+        vec3 normal = normalize(vec3(gradient * 5.0, 1.0));
 
-        vec3 lightDir = normalize(vec3(-0.3, 0.6, 0.75));
-        float diff = clamp(dot(normal, lightDir), 0.0, 1.0);
+        // 1. Direct Front Key Light & Specular Sheen
+        vec3 lightDir = normalize(vec3(-0.35, 0.65, 0.75));
+        float diff = clamp(dot(normal, lightDir) * 0.35 + 0.65, 0.0, 1.0);
 
         vec3 viewDir = vec3(0.0, 0.0, 1.0);
         vec3 halfDir = normalize(lightDir + viewDir);
         float spec = pow(max(dot(normal, halfDir), 0.0), 32.0);
-        float rim = pow(clamp(1.0 - normal.z, 0.0, 1.0), 3.0);
 
-        vec3 shaded = liquidBase * (0.90 + 0.25 * diff) + vec3(1.0) * (spec * 0.45 + rim * 0.15);
+        // 2. Back-Lit Subsurface Scattering
+        vec3 backLightDir = normalize(vec3(0.20, 0.45, -0.88));
+        float forwardScatter = pow(clamp(dot(-viewDir, backLightDir - normal * 0.35), 0.0, 1.0), 3.0);
+        vec3 warmScatter = vec3(1.05, 0.85, 0.65) * (forwardScatter * 0.30 + smoothstep(0.02, 0.18, density) * 0.15);
+        float sssIntensity = forwardScatter * 0.35 + smoothstep(0.02, 0.18, density) * 0.15;
 
-        float baseAlpha = clamp(density * 6.0, 0.25, 1.0);
-        float fluidAlpha = boundaryAlpha * max(baseAlpha, spec * 0.6);
+        // 3. Enlarged Rising Spherical Carbonation Bubbles
+        vec2 bUv1 = vec2(worldX * 12.0 + sin(worldY * 6.0 + uTime * 1.5) * 0.15, worldY * 16.0 + uTime * 2.2);
+        vec2 bUv2 = vec2(worldX * 24.0 + cos(worldY * 9.0 + uTime * 2.0) * 0.15, worldY * 30.0 + uTime * 3.6);
 
-        gl_FragColor = vec4(shaded, fluidAlpha);
+        // Layer 1: Prominent primary bubbles
+        vec2 cell1 = floor(bUv1);
+        vec2 f1 = fract(bUv1) - 0.5;
+        float rnd1 = hash21(cell1);
+        vec2 offset1 = (vec2(hash21(cell1 + 0.3), hash21(cell1 + 0.7)) - 0.5) * 0.45;
+        float dist1 = length(f1 + offset1);
+        float b1 = smoothstep(0.22, 0.02, dist1) * step(0.55, rnd1);
+        float b1_glint = smoothstep(0.08, 0.0, length(f1 + offset1 + vec2(-0.04, 0.04))) * step(0.55, rnd1);
+
+        // Layer 2: Medium secondary bubbles
+        vec2 cell2 = floor(bUv2);
+        vec2 f2 = fract(bUv2) - 0.5;
+        float rnd2 = hash21(cell2);
+        vec2 offset2 = (vec2(hash21(cell2 + 0.4), hash21(cell2 + 0.8)) - 0.5) * 0.45;
+        float dist2 = length(f2 + offset2);
+        float b2 = smoothstep(0.18, 0.02, dist2) * step(0.62, rnd2);
+        float b2_glint = smoothstep(0.06, 0.0, length(f2 + offset2 + vec2(-0.03, 0.03))) * step(0.62, rnd2);
+
+        float bubbleBody = (b1 * 0.50 + b2 * 0.38) * smoothstep(0.03, 0.25, density) * uCarbonation;
+        float bubbleGlint = (b1_glint * 0.75 + b2_glint * 0.55) * smoothstep(0.03, 0.25, density) * uCarbonation;
+
+        vec3 bubbleColor = mix(liquidBase * 1.5 + vec3(0.30), vec3(1.0, 0.98, 0.92), 0.75);
+
+        // Volumetric depth gradient (rich core, translucent glowing edges)
+        float depthGrad = smoothstep(0.02, 0.25, density);
+        vec3 volumeColor = mix(liquidBase * 1.15, liquidBase * 0.90, depthGrad * 0.35);
+
+        // 4. Final Composite
+        vec3 shaded = volumeColor * (0.75 * diff + warmScatter) + (bubbleBody * bubbleColor) + vec3(1.0) * (spec * 0.35 + bubbleGlint);
+
+        // 5. Solid edge for opaque drinks (espresso/milk = 1.0 solid to the edge, vodka/lemonade = translucent)
+        float drinkBulkOpacity = smoothstep(0.02, 0.26, density);
+        float finalAlpha = boundaryAlpha * liquidOpacity;
+
+        gl_FragColor = vec4(shaded, finalAlpha);
     }
 `;
 
@@ -377,6 +1061,9 @@ function initWebGL() {
     splatProgram = createProgram(gl, splatVS, splatFS);
     blurProgram  = createProgram(gl, quadVS, blurFS);
     renderProgram= createProgram(gl, quadVS, renderFS);
+	bgProgram = createProgram(gl, bgVS, bgFS);
+	glassProgram = createProgram(gl, glassVS, glassFS);
+	initBgTexture();
 	
 	cupProgram = createProgram(gl, cupVS, cupFS);
 
@@ -384,6 +1071,22 @@ function initWebGL() {
 	gl.bindBuffer(gl.ARRAY_BUFFER, cupVertexBuffer);
 	// Allocate dynamic vertex buffer space for the physics fixtures
 	gl.bufferData(gl.ARRAY_BUFFER, 1024 * 4, gl.DYNAMIC_DRAW);
+	
+	iceProgram = createProgram(gl, iceVS, iceFS);
+	iceQuadBuffer = gl.createBuffer();
+	gl.bindBuffer(gl.ARRAY_BUFFER, iceQuadBuffer);
+	gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+		-1, -1,  1, -1, -1,  1,
+		-1,  1,  1, -1,  1,  1
+	]), gl.STATIC_DRAW);
+	
+	cherryProgram = createProgram(gl, cherryVS, cherryFS);
+	cherryQuadBuffer = gl.createBuffer();
+	gl.bindBuffer(gl.ARRAY_BUFFER, cherryQuadBuffer);
+	gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+		-1, -1,  1, -1, -1,  1,
+		-1,  1,  1, -1,  1,  1
+	]), gl.STATIC_DRAW);
 
     // Fullscreen quad buffer
     quadBuffer = gl.createBuffer();
@@ -408,6 +1111,8 @@ function initWebGL() {
 function initPhysics() {
     particleMix = [];
 	particleTypes = [];
+	iceCubes = [];
+	cherries = [];
 
     const gravity = new b2Vec2(0, 9.8);
     world = new b2World(gravity);
@@ -416,10 +1121,10 @@ function initPhysics() {
 
     const psd = new b2ParticleSystemDef();
     psd.radius = PARTICLE_RADIUS;
-    psd.dampingStrength = 0.15;
-    psd.viscosityStrength = 0.32;
-    psd.surfaceTensionStrength = 0.24;
-    psd.colorMixingStrength = 0.10;
+    psd.dampingStrength = 0.10;
+    psd.viscosityStrength = 0.05;
+    psd.surfaceTensionStrength = 0.02;
+    psd.colorMixingStrength = 0.01;
 
     particleSystem = world.CreateParticleSystem(psd);
 
@@ -477,11 +1182,11 @@ function spawnLiquid(type, worldX, worldY) {
 
     if (type === 'espresso') {
         pgd.flags = waterFlag | mixingFlag;
-        r = 42; g = 18; b = 8; a = 250; // Opaque espresso
+        r = 72; g = 34; b = 14; a = 255; // Opaque espresso
         pgd.linearVelocity = new b2Vec2((Math.random() - 0.5) * 0.1, 4.6);
     } else if (type === 'milk') {
         pgd.flags = waterFlag | mixingFlag;
-        r = 250; g = 245; b = 235; a = 255; // Opaque milk
+        r = 255; g = 244; b = 218; a = 255; // Opaque milk
         pgd.linearVelocity = new b2Vec2((Math.random() - 0.5) * 0.1, 4.6);
     } else if (type === 'syrup') {
         pgd.flags = waterFlag | viscousFlag | tensileFlag | mixingFlag;
@@ -489,19 +1194,20 @@ function spawnLiquid(type, worldX, worldY) {
         pgd.linearVelocity = new b2Vec2((Math.random() - 0.5) * 0.05, 3.2);
     } else if (type === 'vodka') {
         pgd.flags = waterFlag | mixingFlag;
-        r = 30; g = 30; b = 30; a = 35; // Clear / crystalline transparent
+        r = 245; g = 250; b = 255; a = 28; // Clear / crystalline transparent
         pgd.linearVelocity = new b2Vec2((Math.random() - 0.5) * 0.1, 4.4);
     } else if (type === 'rum') {
         pgd.flags = waterFlag | mixingFlag;
-        r = 30; g = 30; b = 30; a = 35; // Clear / warm light rum
+        r = 245; g = 250; b = 255; a = 28; // Clear / warm light rum
         pgd.linearVelocity = new b2Vec2((Math.random() - 0.5) * 0.1, 4.2);
     } else if (type === 'lemonade') {
         pgd.flags = waterFlag | mixingFlag;
-        r = 250; g = 225; b = 38; a = 155; // Vibrant translucent yellow
+        r = 235; g = 215; b = 100; a = 65; // Vibrant translucent yellow
         pgd.linearVelocity = new b2Vec2((Math.random() - 0.5) * 0.1, 4.5);
     } else if (type === 'wine') {
         pgd.flags = waterFlag | mixingFlag;
-        r = 145; g = 15; b = 50; a = 52; // Deep ruby violet (~80% transparency)
+        r = 145; g = 15; b = 50; a = 90; // Deep ruby violet (~80% transparency)
+		//r = 232; g = 22; b = 58; a = 78;
         pgd.linearVelocity = new b2Vec2((Math.random() - 0.5) * 0.1, 4.4);
     } else if (type === 'orange-liqueur') {
         pgd.flags = waterFlag | mixingFlag;
@@ -513,7 +1219,7 @@ function spawnLiquid(type, worldX, worldY) {
         pgd.linearVelocity = new b2Vec2((Math.random() - 0.5) * 0.1, 4.3);
     } else if (type === 'lime-juice') {
         pgd.flags = waterFlag | mixingFlag;
-        r = 185; g = 230; b = 55; a = 140; // Translucent vibrant citrus green-yellow
+        r = 185; g = 230; b = 55; a = 60; // Translucent vibrant citrus green-yellow
         pgd.linearVelocity = new b2Vec2((Math.random() - 0.5) * 0.1, 4.4);
     } else if (type === 'ginger-beer') {
         pgd.flags = waterFlag | mixingFlag;
@@ -529,7 +1235,7 @@ function spawnLiquid(type, worldX, worldY) {
         pgd.linearVelocity = new b2Vec2((Math.random() - 0.5) * 0.1, 4.4);
     } else if (type === 'triple-sec') {
         pgd.flags = waterFlag | mixingFlag;
-        r = 30; g = 30; b = 30; a = 35; // Crisp transparent citrus liqueur
+        r = 245; g = 250; b = 255; a = 28; // Crisp transparent citrus liqueur
         pgd.linearVelocity = new b2Vec2((Math.random() - 0.5) * 0.1, 4.3);
     } else if (type === 'tomato-juice') {
         pgd.flags = waterFlag | viscousFlag | mixingFlag;
@@ -537,11 +1243,11 @@ function spawnLiquid(type, worldX, worldY) {
         pgd.linearVelocity = new b2Vec2((Math.random() - 0.5) * 0.08, 4.0);
     } else if (type === 'tequila') {
         pgd.flags = waterFlag | mixingFlag;
-        r = 30; g = 30; b = 30; a = 35; // Clean platinum crystal clarity
+        r = 245; g = 250; b = 255; a = 28; // Clean platinum crystal clarity
         pgd.linearVelocity = new b2Vec2((Math.random() - 0.5) * 0.1, 4.4);
     } else if (type === 'coffee-liqueur') {
         pgd.flags = waterFlag | viscousFlag | tensileFlag | mixingFlag;
-        r = 105; g = 50; b = 20; a = 210; // Glossy deep roasted espresso liqueur
+        r = 105; g = 50; b = 20; a = 255; // Glossy deep roasted espresso liqueur
         pgd.linearVelocity = new b2Vec2((Math.random() - 0.5) * 0.08, 3.8);
     } else if (type === 'simple-syrup') {
         pgd.flags = waterFlag | viscousFlag | tensileFlag | mixingFlag;
@@ -754,16 +1460,24 @@ function render() {
     gl.clearColor(0.0, 0.0, 0.0, 0.0); 
     gl.clear(gl.COLOR_BUFFER_BIT);
 
-    gl.enable(gl.BLEND);
-    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-	
-    renderGlassCup(false);
+    gl.disable(gl.BLEND);
+	renderBackground(); // Draws the studio wall, marble table & contact shadow
 
+	gl.enable(gl.BLEND);
+	gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+	
+    renderGlassware(false);
+	
+	// 3. Render Fluid
     gl.useProgram(renderProgram);
     gl.bindTexture(gl.TEXTURE_2D, fboA.texture);
     gl.uniform1i(gl.getUniformLocation(renderProgram, 'uFluidTexture'), 0);
     gl.uniform2f(gl.getUniformLocation(renderProgram, 'uTexelSize'), 1.0 / canvas.width, 1.0 / canvas.height);
     gl.uniform1f(gl.getUniformLocation(renderProgram, 'uThreshold'), 0.008);
+	
+	// Pass elapsed time in seconds to animate the rising bubbles
+	gl.uniform1f(gl.getUniformLocation(renderProgram, 'uTime'), performance.now() * 0.001);
+	gl.uniform1f(gl.getUniformLocation(renderProgram, 'uCarbonation'), calculateMixtureCarbonation());
 	
 	// Pass shaker position and mode
     const pos = cupBody.GetPosition();
@@ -776,7 +1490,10 @@ function render() {
     gl.vertexAttribPointer(qPos2, 2, gl.FLOAT, false, 0, 0);
     gl.drawArrays(gl.TRIANGLES, 0, 6);
 	
-    renderGlassCup(true);
+	renderIceCubes();
+	renderCherries();
+    //renderGlassCup(true);
+	renderGlassware(true);
 	//renderMeasurementBounds();
 }
 
@@ -832,7 +1549,7 @@ function renderGlassCup(isOverlay) {
 
     if (!isOverlay) {
         // Solid dark container interior
-        gl.uniform4f(colorLoc, 0.10, 0.10, 0.10, 0.30);
+        gl.uniform4f(colorLoc, 0.90, 0.95, 1.0, 0.06);
         gl.drawArrays(gl.TRIANGLES, 0, triangleCount);
     } else {
         // Solid opaque cup walls & base (blocks all liquid bleed behind walls)
@@ -856,12 +1573,27 @@ function loop() {
         particleSystem.DestroyParticlesInShape(bottomKillShape, identityTransform);
     }
     //mixParticles();
+	
+	applyIceBuoyancy();
 
-    if (isPointerDown && selectedIngredient && !isMixingMode) {
-		const worldX = pointerX / SCALE;
-		const worldY = pointerY / SCALE;
-		spawnLiquid(selectedIngredient, worldX, worldY);
+	if (isPointerDown && selectedIngredient === 'ice' && !isMixingMode) {
+		const now = Date.now();
+		if (now - lastIceSpawnTime > 350 && iceCubes.length < 6) {
+			spawnIce(pointerX / SCALE, pointerY / SCALE);
+			lastIceSpawnTime = now;
+		}
+	} 
+	else if (isPointerDown && selectedIngredient === 'cherry' && !isMixingMode) {
+		const now = Date.now();
+		if (now - lastCherrySpawnTime > 350 && cherries.length < 5) {
+			spawnCherry(pointerX / SCALE, pointerY / SCALE);
+			lastCherrySpawnTime = now;
+		}
 	}
+	else if (isPointerDown && selectedIngredient && selectedIngredient !== 'ice' && selectedIngredient !== 'cherry' && !isMixingMode) {
+		spawnLiquid(selectedIngredient, pointerX / SCALE, pointerY / SCALE);
+	}
+
 
     render();
     animationFrameId = requestAnimationFrame(loop);
@@ -923,6 +1655,7 @@ function handlePointerMove(e) {
         vy = Math.max(-14, Math.min(14, vy));
 
         cupBody.SetLinearVelocity(new b2Vec2(0, vy));
+		updateSloshAudio(vy);
     } else if (isPointerDown && !isMixingMode) {
         updatePointerPos(e);
     }
@@ -934,6 +1667,7 @@ function handlePointerEnd() {
         isDraggingCup = false;
         cupBody.SetLinearVelocity(new b2Vec2(0, 0));
     }
+	updateSloshAudio(0);
 }
 
 // Mouse Listeners

@@ -1934,7 +1934,7 @@ window.addEventListener('keydown', async  (e) => {
 	
 	const data = await response.json();
 	console.log(data.choices[0].message.content);
-    }
+    })
 });
 
 

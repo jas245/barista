@@ -6,6 +6,7 @@
  */
 
 
+
 //create another image thats framed the way this one is, but make that person look uncanny and creepy. their look must be completely random. they should have a neutral expression. 
 //make this person frown/look angry
 //make this person smile creepily
@@ -39,6 +40,99 @@ bottomKillShape.SetAsBoxXYCenterAngle(10.0, 0.5, new b2Vec2(0.0, 5.0), 0);
 
 const identityTransform = new b2Transform();
 identityTransform.SetIdentity();
+
+
+const FEMALE_VOICES = [
+    "jSc0fl7ySVBKbBreRrYP", // Daye filipina
+    "ZTLBC2emTrxYTdCF99Kb", // Rozie filipina
+    "6ZZR4JY6rOriLSDtV54M",  // Sreeja indian
+	"vClXJXA8GI2rtwhNsOja", //Simran indian
+	"USEQXnsXRJlw2k9LUzG4", //Tessa british
+	"WKWX31A0Kkv2Y4CQRsll", //Chazza british
+	"FUu5jJAN31dt6KeE1fk2", //Ann chinese
+	"rCuVrCHOUMY3OwyJBJym", //Mia american
+	"ogwqBH5bbF03DSbNiRNN", //Savvy american
+];
+
+const MALE_VOICES = [
+    "yRswJrfr4gJ1N9YNt8C7", // Marcus filipino
+    "M9umV91aYFeyuewSREwA", // James filipino
+    "dtb2DcRUiZX01F9bvBi0",  // Rian indian
+	"WtIqwF5CWCkaZSGmvsm1", //Rahul indian
+	"GrVxA7Ub86nJH91Viyiv", //James (English storyteller) british
+	"fATgBRI8wg5KkDFg8vBd", //James (smooth) british
+	"dhwafD61uVd8h85wAZSE", //Denzel jamaican
+	"HKFOb9iktHA85uKXydRT", //Russ american
+	"s3TPKV1kjDlVtZbl4Ksh", //Adam american
+];
+
+// Map each person ID (1 to 4) to 'male' or 'female'
+const CUSTOMER_GENDERS = {
+    1: 'female',
+    2: 'female',
+    3: 'male',
+    4: 'male'
+};
+
+function getRandomVoiceForPerson(personId) {
+    const gender = CUSTOMER_GENDERS[personId] || 'female';
+    const voiceList = (gender === 'male') ? MALE_VOICES : FEMALE_VOICES;
+    return voiceList[Math.floor(Math.random() * voiceList.length)];
+}
+
+let currentKeyIndex = 0;
+let currentCustomerVoiceId = null;
+
+function getActiveKey() {
+    const key = ELEVEN_KEYS[currentKeyIndex];
+    // Alternate to the next key for the next request
+    currentKeyIndex = (currentKeyIndex + 1) % ELEVEN_KEYS.length;
+    return key;
+}
+
+async function playCustomerVoice(text, voiceId = "WtIqwF5CWCkaZSGmvsm1") {
+    const targetUrl = `https://api.us.elevenlabs.io/v1/text-to-speech/${voiceId}/stream?`;
+    
+    // Use your deployed Cloudflare Worker URL here:
+    const proxyUrl = `https://eleven-proxy.dsouzajason68.workers.dev/?url=${encodeURIComponent(targetUrl)}`;
+
+    const token = "eyJhbGciOiJSUzI1NiIsImtpZCI6ImFhMmNiOTcyNTIzMzc3ZWRlMjE2MzQwYmNkNTg4MTA0MTQxZTYxY2MiLCJ0eXAiOiJKV1QifQ.eyJuYW1lIjoiTXIgQiIsInBpY3R1cmUiOiJodHRwczovL2xoMy5nb29nbGV1c2VyY29udGVudC5jb20vYS9BQ2c4b2NMRnV2N2RTeHlRTnU5b1A1RWhYZ2pVdWtvckFBM2RFOHZ2aUg0Qkp0aF9ldzJiNXktXz1zOTYtYyIsIndvcmtzcGFjZV9pZCI6ImIyZmY4YjIyYjIwNjQxZmZhMGYxNThhZjIxZWM3ZWQxIiwid29ya3NwYWNlX3VzZXJfaWQiOiJ1c2VyXzM2MDFreGR4eHpubWVuNHM1ZXp5OHRqZHhkdzAiLCJpc3MiOiJodHRwczovL3NlY3VyZXRva2VuLmdvb2dsZS5jb20veGktbGFicyIsImF1ZCI6InhpLWxhYnMiLCJhdXRoX3RpbWUiOjE3ODM5NTI3NzAsInVzZXJfaWQiOiJpaU9velN3d1dHZVdzOW1MVWlRU2tsUlR6V1cyIiwic3ViIjoiaWlPb3pTd3dXR2VXczltTFVpUVNrbFJUeldXMiIsImlhdCI6MTc4Nzk3ODk3NywiZXhwIjoxNzg3OTgyNTc3LCJlbWFpbCI6ImRzb3V6YWphc29uNjhAZ21haWwuY29tIiwiZW1haWxfdmVyaWZpZWQiOnRydWUsImZpcmViYXNlIjp7ImlkZW50aXRpZXMiOnsiZ29vZ2xlLmNvbSI6WyIxMDQzNTIwODYzMjE2NjU1NTk0NDgiXSwiZW1haWwiOlsiZHNvdXphamFzb242OEBnbWFpbC5jb20iXX0sInNpZ25faW5fcHJvdmlkZXIiOiJnb29nbGUuY29tIn19.Pyfass8whW_hNSHtmpObTHeubgl1eR0vqp7eSX_nQyAMKvvFNC2EAB8-YSYT8nvn6ZrzKwt7cJkAu6ikKgkBvC151l0BPWQ89AkkHfSvlCZ2ia9obcLB2jr42EoX1UoNnFBhd5l2QZJd4gkFDtfb_t9iSOEEs5M8AAGLWnuipHGg5qjzoHzVT0ZYlwj_26uxvEkA83bNBfARFZxiyWl5gRaXxL88MeR3neIYJ52k73B3WryAM5Kxz62jOOR_soKtxMX102NwZlPxDXX2Z95KD29577YZlXFaH3YdYHC9yOVvVNCnlzhoHNniKoJB9EON_Ko81762tKX9SY74Ow5GcA";
+
+    try {
+        const response = await fetch(proxyUrl, {
+            method: "POST",
+            headers: {
+                "Authorization": `Bearer ${token}`,
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                text: text,
+                model_id: "eleven_flash_v2"
+            })
+        });
+
+        if (!response.ok) {
+			const errorText = await response.text();
+			console.error("ElevenLabs Error Details:", response.status, errorText);
+			return;
+		}
+
+        const blob = await response.blob();
+        const audioUrl = URL.createObjectURL(blob);
+        const audio = new Audio(audioUrl);
+        audio.play().catch(() => {
+			// If blocked on initial load, play as soon as the user clicks anywhere on the screen
+			const unlockAudio = () => {
+				audio.play().catch(() => {});
+				window.removeEventListener('pointerdown', unlockAudio);
+			};
+			window.addEventListener('pointerdown', unlockAudio);
+		});
+
+    } catch (err) {
+        console.error("Fetch error:", err);
+    }
+}
 
 let hasLime = false;
 let limeTexture;
@@ -1837,29 +1931,7 @@ window.addEventListener('keydown', async  (e) => {
     if (e.key === 'c' || e.key === 'C') {
         logCupContents();
     };
-	if (e.key === 'ppp' || e.key === 'PPP') {
-        const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-		method: "POST",
-		headers: {
-			"Authorization": `Bearer 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`,
-			"Content-Type": "application/json"
-		},
-		body: JSON.stringify({
-			model: "openai/gpt-oss-120b",
-			messages: [
-				{
-					role: "system",
-					content: "Return only the requested text. Keep responses short."
-				},
-				{
-					role: "user",
-					content: "Make a bar order where you request an espresso martini, in a rude way."
-				}
-			],
-			max_completion_tokens: 400
-		})
-	});
-
+	
 	const data = await response.json();
 	console.log(data.choices[0].message.content);
     }
@@ -2033,7 +2105,7 @@ function highlightDrinkName(text, drinkName) {
 }
 
 // Generate customer dialogue via Groq
-async function requestCustomerOrder(drinkName) {
+async function requestCustomerOrder(drinkName, personId) {
     const isNice = Math.random() < 0.5;
     const tone = isNice ? "polite and nice" : "rude";
     
@@ -2043,7 +2115,8 @@ async function requestCustomerOrder(drinkName) {
         const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
             method: "POST",
             headers: {
-                "Authorization": "Bearer __GROQ_API_KEY__",
+                "Authorization": `Bearer __GROQ_API_KEY__`,
+				
                 "Content-Type": "application/json"
             },
             body: JSON.stringify({
@@ -2067,17 +2140,24 @@ async function requestCustomerOrder(drinkName) {
         if (speech) {
             speech = speech.replace(/^["']|["']$/g, '');
             setSpeechText(highlightDrinkName(speech, drinkName));
+
+            // Select random voice matching gender and play audio
+            currentCustomerVoiceId = getRandomVoiceForPerson(personId);
+            playCustomerVoice(speech, currentCustomerVoiceId );
             return;
         }
     } catch (err) {
         console.error("Groq API error:", err);
     }
 
-    // Fallback if API is unreachable
+    // Fallback if API fails
     const fallbackText = isNice
         ? `Could I please get a ${drinkName}?`
         : `Hurry up and give me a ${drinkName}!`;
     setSpeechText(highlightDrinkName(fallbackText, drinkName));
+
+    currentCustomerVoiceId = getRandomVoiceForPerson(personId);
+    playCustomerVoice(fallbackText, currentCustomerVoiceId);
 }
 
 // ±10% Recipe Checker
@@ -2125,7 +2205,7 @@ async function startNextCustomer() {
     const recipeKeys = Object.keys(RECIPES);
     currentTargetDrink = recipeKeys[Math.floor(Math.random() * recipeKeys.length)];
 
-    await requestCustomerOrder(currentTargetDrink);
+    await requestCustomerOrder(currentTargetDrink, personId);
 }
 
 // Initialize Game loop
@@ -2156,25 +2236,32 @@ document.getElementById('btn-serve').addEventListener('click', () => {
 
     // After 1 second: display feedback
     setTimeout(() => {
-        if (isPassed) {
-            setCustomerFace(personId, 'happy');
-            const randomText = POSITIVE_FEEDBACK[Math.floor(Math.random() * POSITIVE_FEEDBACK.length)];
-            setSpeechText(randomText);
-        } else {
-            setCustomerFace(personId, 'angry');
-            const randomText = NEGATIVE_FEEDBACK[Math.floor(Math.random() * NEGATIVE_FEEDBACK.length)];
-            setSpeechText(randomText);
-        }
+		let feedbackText = "";
 
-        // After 3 seconds: hide face and load next customer
-        setTimeout(() => {
-            setCustomerFace(null, null);
-            setSpeechText("");
+		if (isPassed) {
+			setCustomerFace(personId, 'happy');
+			feedbackText = POSITIVE_FEEDBACK[Math.floor(Math.random() * POSITIVE_FEEDBACK.length)];
+		} else {
+			setCustomerFace(personId, 'angry');
+			feedbackText = NEGATIVE_FEEDBACK[Math.floor(Math.random() * NEGATIVE_FEEDBACK.length)];
+		}
 
-            // Loop to next customer in shuffled order
-            currentCustomerIndex = (currentCustomerIndex + 1) % customerQueue.length;
-            startNextCustomer();
-        }, 3000);
+		setSpeechText(feedbackText);
+		
+		// Play speech using the same voice ID:
+		if (currentCustomerVoiceId) {
+			playCustomerVoice(feedbackText, currentCustomerVoiceId);
+		}
 
-    }, 2000);
+		// After 3.5 seconds: hide face and load next customer
+		setTimeout(() => {
+			setCustomerFace(null, null);
+			setSpeechText("");
+
+			// Loop to next customer in shuffled order
+			currentCustomerIndex = (currentCustomerIndex + 1) % customerQueue.length;
+			startNextCustomer();
+		}, 3500);
+
+	}, 2000);
 });

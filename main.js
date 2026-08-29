@@ -40,6 +40,78 @@ bottomKillShape.SetAsBoxXYCenterAngle(10.0, 0.5, new b2Vec2(0.0, 5.0), 0);
 const identityTransform = new b2Transform();
 identityTransform.SetIdentity();
 
+let hasLime = false;
+let limeTexture;
+let limeProgram, limeQuadBuffer;
+
+const limeVS = `
+    attribute vec2 aPosition;
+    uniform vec2 uResolution;
+    uniform vec2 uCenter;
+    uniform float uAngle;
+    uniform vec2 uHalfSize;
+    varying vec2 vUv;
+
+    void main() {
+        mat2 rot = mat2(cos(uAngle), -sin(uAngle), sin(uAngle), cos(uAngle));
+        vec2 worldPos = uCenter + rot * (aPosition * uHalfSize);
+        vec2 zeroToOne = (worldPos * 100.0) / uResolution;
+        vec2 clipSpace = (zeroToOne * 2.0) - 1.0;
+        gl_Position = vec4(clipSpace * vec2(1.0, -1.0), 0.0, 1.0);
+        vUv = aPosition * 0.5 + 0.5;
+    }
+`;
+
+const limeFS = `
+    precision mediump float;
+    uniform sampler2D uTexture;
+    varying vec2 vUv;
+
+    void main() {
+        vec4 texColor = texture2D(uTexture, vUv);
+        if (texColor.a < 0.05) discard;
+        gl_FragColor = texColor;
+    }
+`;
+
+function initLimeTexture() {
+    limeTexture = gl.createTexture();
+    const img = new Image();
+    img.src = 'lime.png';
+    img.onload = () => {
+        gl.bindTexture(gl.TEXTURE_2D, limeTexture);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
+    };
+}
+
+function renderLime() {
+    if (!hasLime) return;
+
+    gl.useProgram(limeProgram);
+    gl.uniform2f(gl.getUniformLocation(limeProgram, 'uResolution'), canvas.width, canvas.height);
+
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, limeTexture);
+    gl.uniform1i(gl.getUniformLocation(limeProgram, 'uTexture'), 0);
+
+    const pos = cupBody ? cupBody.GetPosition() : { x: 0, y: 0 };
+    // Positioned at the top-right lip of the glass
+    gl.uniform2f(gl.getUniformLocation(limeProgram, 'uCenter'), 2.50 + pos.x, 2.75 + pos.y);
+    gl.uniform1f(gl.getUniformLocation(limeProgram, 'uAngle'), 0.7); // Slight tilt to wedge onto the rim
+    gl.uniform2f(gl.getUniformLocation(limeProgram, 'uHalfSize'), 0.4, 0.3); // Width & height scale
+
+    gl.bindBuffer(gl.ARRAY_BUFFER, limeQuadBuffer);
+    const posAttr = gl.getAttribLocation(limeProgram, 'aPosition');
+    gl.enableVertexAttribArray(posAttr);
+    gl.vertexAttribPointer(posAttr, 2, gl.FLOAT, false, 0, 0);
+
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
+}
+
 // --- Sloshing Sound Controller ---
 const sloshAudio = new Audio('slosh.mp3');
 sloshAudio.loop = true;
@@ -1087,6 +1159,16 @@ function initWebGL() {
 		-1, -1,  1, -1, -1,  1,
 		-1,  1,  1, -1,  1,  1
 	]), gl.STATIC_DRAW);
+	
+	limeProgram = createProgram(gl, limeVS, limeFS);
+	initLimeTexture();
+
+	limeQuadBuffer = gl.createBuffer();
+	gl.bindBuffer(gl.ARRAY_BUFFER, limeQuadBuffer);
+	gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+		-1, -1,  1, -1, -1,  1,
+		-1,  1,  1, -1,  1,  1
+	]), gl.STATIC_DRAW);
 
     // Fullscreen quad buffer
     quadBuffer = gl.createBuffer();
@@ -1113,6 +1195,7 @@ function initPhysics() {
 	particleTypes = [];
 	iceCubes = [];
 	cherries = [];
+	hasLime = false;
 
     const gravity = new b2Vec2(0, 9.8);
     world = new b2World(gravity);
@@ -1492,6 +1575,7 @@ function render() {
 	
 	renderIceCubes();
 	renderCherries();
+	renderLime();
     //renderGlassCup(true);
 	renderGlassware(true);
 	//renderMeasurementBounds();
@@ -1590,9 +1674,13 @@ function loop() {
 			lastCherrySpawnTime = now;
 		}
 	}
+	else if (isPointerDown && selectedIngredient === 'lime' && !isMixingMode) {
+		hasLime = true;
+	}
 	else if (isPointerDown && selectedIngredient && selectedIngredient !== 'ice' && selectedIngredient !== 'cherry' && !isMixingMode) {
 		spawnLiquid(selectedIngredient, pointerX / SCALE, pointerY / SCALE);
 	}
+	
 
 
     render();
@@ -1955,7 +2043,7 @@ async function requestCustomerOrder(drinkName) {
         const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
             method: "POST",
             headers: {
-                "Authorization": "Bearer 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",
+                "Authorization": "Bearer __GROQ_API_KEY__",
                 "Content-Type": "application/json"
             },
             body: JSON.stringify({
